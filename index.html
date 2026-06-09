@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <title>OFERTAL - Marketplace de Productos y Servicios</title>
+    <meta name="description" content="OFERTAL: Encuentra y publica productos y servicios en tu ciudad rápidamente. El marketplace más fácil y rápido de usar.">
+    <meta name="keywords" content="ofertal, marketplace, productos, servicios, comprar, vender, clasificados, colombia">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: { indigo: { 600: '#4f46e5', 700: '#4338ca' } }
+                }
+            }
+        }
+    </script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <style>
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased min-h-screen flex flex-col relative pb-16">
+
+    <a href="https://wa.me/573044435307?text=Hola,%20necesito%20soporte%20en%20OFERTAL" target="_blank" class="fixed bottom-6 right-6 bg-[#25D366] text-white font-bold px-5 py-3 rounded-full shadow-xl hover:bg-[#20bd5a] transition-all transform hover:scale-105 z-40 flex items-center gap-2 tracking-wide text-sm">
+        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51a12.8 12.8 0 00-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
+        SOPORTE
+    </a>
+
+    <nav class="bg-white shadow-sm sticky top-0 z-20">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap gap-4 justify-between items-center">
+            <div class="text-2xl font-black text-indigo-600 tracking-tight cursor-pointer" onclick="resetFiltros()">
+                OFERTAL<span class="text-slate-800 text-3xl">.</span>
+            </div>
+            
+            <div class="flex-grow max-w-md w-full order-3 md:order-none mt-2 md:mt-0">
+                <div class="relative">
+                    <input type="text" id="searchInput" placeholder="Buscar productos o servicios..." class="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition bg-slate-50">
+                    <svg class="w-5 h-5 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2" id="authContainer"></div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 py-6 w-full flex gap-3 overflow-x-auto hide-scrollbar items-center">
+        <button class="filter-btn active bg-slate-800 text-white px-4 py-1.5 rounded-full text-sm font-medium transition" data-filter="todos">Todos</button>
+        <button class="filter-btn bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 px-4 py-1.5 rounded-full text-sm font-medium transition" data-filter="producto">Productos</button>
+        <button class="filter-btn bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 px-4 py-1.5 rounded-full text-sm font-medium transition" data-filter="servicio">Servicios</button>
+        <div id="myPostsFilterContainer" class="flex gap-3 hidden">
+            <span class="text-slate-300">|</span>
+            <button class="filter-btn bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-50 px-4 py-1.5 rounded-full text-sm font-bold transition" data-filter="mis-publicaciones">Mis Publicaciones 📁</button>
+        </div>
+    </div>
+
+    <main class="flex-grow max-w-7xl mx-auto px-4 pb-12 w-full">
+        <div id="loader" class="text-center py-12 text-slate-400">Buscando ofertas...</div>
+        <div id="feed" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 hidden"></div>
+        
+        <div id="emptyState" class="hidden text-center py-20">
+            <h3 class="text-lg font-medium text-slate-800">No encontramos resultados</h3>
+            <p class="text-slate-500 mt-1">Intenta con otros términos de búsqueda o revisa tus pestañas.</p>
+        </div>
+    </main>
+
+    <div id="publishModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md my-8 overflow-hidden transform transition-all flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+                <h2 id="modalPublishTitle" class="text-lg font-semibold text-slate-800">Publicar en OFERTAL</h2>
+                <button onclick="cerrarModales()" class="text-slate-400 hover:text-slate-600 transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <form id="publishForm" class="p-6 space-y-4 overflow-y-auto flex-grow">
+                <input type="hidden" id="edit_anuncio_id" value="">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Título</label>
+                    <input type="text" id="titulo" required class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition" placeholder="Ej. Zapatillas Nike o Servicio de plomería">
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Tipo</label>
+                        <select id="tipo" required class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600">
+                            <option value="producto">Producto</option>
+                            <option value="servicio">Servicio</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Precio (COP)</label>
+                        <input type="text" id="precio" required class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition font-semibold" placeholder="Ej. 5.000">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Departamento</label>
+                        <select id="pubDepartamento" required class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600">
+                            <option value="">Seleccione...</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Municipio</label>
+                        <select id="pubMunicipio" required disabled class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 disabled:bg-slate-100 disabled:text-slate-400">
+                            <option value="">Seleccione Depto primero</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Descripción</label>
+                    <textarea id="descripcion" rows="3" required class="w-full px-3 py-2 border border-slate-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600" placeholder="Detalles, estado, condiciones..."></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1 flex justify-between">
+                        <span>Imágenes (Máx. 3)</span>
+                        <span id="editImgWarning" class="text-xs text-amber-600 hidden">Dejar vacío para conservar actuales</span>
+                    </label>
+                    <input type="file" id="imagen_files" accept="image/*" multiple class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 transition">
+                    
+                    <div id="imagePreviewsContainer" class="flex gap-2 mt-3 hidden"></div>
+                </div>
+
+                <div class="pt-2">
+                    <button type="submit" id="btnSubmit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition shadow-sm">
+                        Enviar Publicación
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="detailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-4 overflow-hidden transform transition-all flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+                <span id="detailTag" class="px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider"></span>
+                <button onclick="cerrarModales()" class="text-slate-400 hover:text-slate-600 transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="overflow-y-auto flex-grow">
+                <div class="relative h-72 sm:h-96 bg-slate-900 flex items-center justify-center select-none overflow-hidden">
+                    <img id="detailBigImg" src="" alt="" class="w-full h-full object-contain">
+                    <div id="detailCarouselControls" class="absolute inset-0 flex justify-between items-center px-4 pointer-events-none">
+                        <button id="detailPrevBtn" class="pointer-events-auto bg-black/50 hover:bg-black/70 text-white w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold transition">&larr;</button>
+                        <button id="detailNextBtn" class="pointer-events-auto bg-black/50 hover:bg-black/70 text-white w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold transition">&rarr;</button>
+                    </div>
+                    <div id="detailDotsContainer" class="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 bg-black/30 px-3 py-1 rounded-full"></div>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex flex-wrap gap-2 justify-between items-start">
+                        <div>
+                            <h2 id="detailTitle" class="text-xl sm:text-2xl font-black text-slate-800"></h2>
+                            <p id="detailLocation" class="text-xs font-semibold text-slate-400 mt-1 flex items-center gap-1"></p>
+                        </div>
+                        <span id="detailPrice" class="text-2xl font-black text-indigo-600"></span>
+                    </div>
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                        <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">Descripción</h4>
+                        <p id="detailDescription" class="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 border-t border-slate-100 bg-slate-50 shrink-0 flex gap-2" id="detailActionsContainer"></div>
+        </div>
+    </div>
+
+    <div id="successModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 text-center transform transition-all">
+            <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+            </div>
+            <h3 class="text-lg font-bold text-slate-800 mb-2">¡Publicación Recibida!</h3>
+            <p class="text-sm text-slate-600 mb-6 leading-relaxed">
+                Tu publicación ha sido enviada con éxito. Está pendiente de verificación, por favor esperar o escribir al WhatsApp 
+                <a id="successWpLink" href="https://wa.me/573044435307?text=Hola,%20acabo%20de%20subir%20un%20anuncio%20en%20OFERTAL%20y%20me%20gustaría%20su%20verificación." target="_blank" class="text-indigo-600 font-extrabold hover:underline inline-flex items-center gap-0.5 bg-indigo-50 px-1.5 py-0.5 rounded-md">
+                    3044435307
+                </a>.
+            </p>
+            <button onclick="cerrarModales()" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded-xl transition shadow-sm">
+                Entendido
+            </button>
+        </div>
+    </div>
+
+    <div id="authModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden p-6 text-center max-h-[95vh] flex flex-col">
+            <h2 id="authTitle" class="text-2xl font-bold text-slate-800 mb-1 shrink-0">Iniciar Sesión</h2>
+            <p id="authSubtitle" class="text-sm text-slate-500 mb-4 shrink-0">Usa tu WhatsApp colombiano y tu PIN de 4 dígitos</p>
+            
+            <form id="authForm" class="space-y-3 text-left overflow-y-auto pr-1 flex-grow">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Número de WhatsApp</label>
+                    <input type="number" id="authPhone" required class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Ej. 3044435307">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">PIN Secreto (4 dígitos)</label>
+                    <input type="password" id="authPin" required maxlength="4" pattern="[0-9]{4}" class="w-full px-3 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-600 text-center tracking-widest text-lg font-bold" placeholder="••••">
+                </div>
+                <div id="registerExtraFields" class="space-y-3 hidden pt-1 border-t border-slate-100">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Primer Nombre</label>
+                            <input type="text" id="authNombre" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Tu nombre">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Edad</label>
+                            <input type="number" id="authEdad" min="1" max="120" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm" placeholder="Ej. 25">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Dpto. Residencia</label>
+                            <select id="authDepartamento" class="w-full px-2 py-2 border border-slate-200 rounded-xl bg-white text-xs">
+                                <option value="">Seleccione...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Municipio</label>
+                            <select id="authMunicipio" disabled class="w-full px-2 py-2 border border-slate-200 rounded-xl bg-white text-xs disabled:bg-slate-100">
+                                <option value="">Seleccione...</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" id="btnAuth" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl transition mt-2">Ingresar</button>
+            </form>
+            <div class="mt-3 text-sm text-slate-600 shrink-0">
+                <span id="authToggleText">¿No tienes cuenta?</span> 
+                <button onclick="toggleAuthMode()" class="text-indigo-600 font-semibold hover:underline" id="authToggleBtn">Regístrate</button>
+            </div>
+            <button onclick="cerrarModales()" class="mt-3 text-sm text-slate-400 hover:text-slate-600 shrink-0">Cancelar</button>
+        </div>
+    </div>
+
+    <script>
+        // 1. INICIALIZACIÓN DE SUPABASE
+        const SUPABASE_URL = "https://wvzbaeqzpgsnokcxzpcf.supabase.co"; 
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2emJhZXF6cGdzbm9rY3h6cGNmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzEyMTksImV4cCI6MjA5NjYwNzIxOX0.VA4wyl8nOCnHwz_gxl9MkQUmC9w8821HjnHpAr112Fw';
+        
+        const { createClient } = supabase;
+        const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // ESTADO GLOBAL
+        let anunciosData = [];
+        let currentFilter = 'todos';
+        let searchTerm = '';
+        let currentUser = null;
+        let isLoginMode = true;
+        let departamentosColombia = [];
+        
+        // Estado de carruseles de tarjetas [ID: INDEX]
+        let carruselIndices = {}; 
+        
+        // Estado de imágenes para el modal detallado actual
+        let currentDetailImages = [];
+        let currentDetailIndex = 0;
+
+        const CONSTANT_SALT = "9876"; 
+
+        // ELEMENTOS DEL DOM
+        const feedContainer = document.getElementById('feed');
+        const loader = document.getElementById('loader');
+        const emptyState = document.getElementById('emptyState');
+        const searchInput = document.getElementById('searchInput');
+        const priceInput = document.getElementById('precio');
+        const imageFilesInput = document.getElementById('imagen_files');
+        const imagePreviewsContainer = document.getElementById('imagePreviewsContainer');
+
+        // ======== PREVISUALIZACIÓN DE MINIATURAS EN TIEMPO REAL ========
+        imageFilesInput.addEventListener('change', function(e) {
+            imagePreviewsContainer.innerHTML = '';
+            const files = e.target.files;
+            
+            if (files.length > 3) {
+                alert('Límite excedido: Solo puedes cargar un máximo de 3 imágenes.');
+                this.value = '';
+                imagePreviewsContainer.classList.add('hidden');
+                return;
+            }
+
+            if (files.length > 0) {
+                imagePreviewsContainer.classList.remove('hidden');
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        const img = document.createElement('img');
+                        img.src = event.target.result;
+                        img.className = "w-16 h-16 object-cover rounded-xl border border-slate-200 shadow-sm";
+                        imagePreviewsContainer.appendChild(img);
+                    }
+                    reader.readAsDataURL(file);
+                });
+            } else {
+                imagePreviewsContainer.classList.add('hidden');
+            }
+        });
+
+        // ======== MÁSCARA DE PRECIO EN PESOS COLOMBIANOS (COP) ========
+        priceInput.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/\D/g, ''); 
+            if (value) {
+                e.target.value = new Intl.NumberFormat('es-CO').format(parseInt(value));
+            } else {
+                e.target.value = '';
+            }
+        });
+
+        // ======== API DE COLOMBIA ========
+        async function cargarDepartamentos() {
+            try {
+                const response = await fetch('https://api-colombia.com/api/v1/Department');
+                if (!response.ok) throw new Error();
+                departamentosColombia = await response.json();
+                departamentosColombia.sort((a, b) => a.name.localeCompare(b.name));
+
+                const selectPub = document.getElementById('pubDepartamento');
+                const selectAuth = document.getElementById('authDepartamento');
+                let optionsHtml = '<option value="">Seleccione...</option>';
+                departamentosColombia.forEach(d => {
+                    optionsHtml += `<option value="${d.id}">${d.name}</option>`;
+                });
+                selectPub.innerHTML = optionsHtml;
+                selectAuth.innerHTML = optionsHtml;
+            } catch (err) {
+                console.error("Error cargando departamentos colombianos:", err);
+            }
+        }
+
+        async function configurarManejadorMunicipios(idSelectDepto, idSelectMun) {
+            const deptoSelect = document.getElementById(idSelectDepto);
+            const munSelect = document.getElementById(idSelectMun);
+
+            deptoSelect.addEventListener('change', async () => {
+                const deptoId = deptoSelect.value;
+                if (!deptoId) {
+                    munSelect.innerHTML = '<option value="">Seleccione...</option>';
+                    munSelect.disabled = true;
+                    return;
+                }
+                munSelect.disabled = true;
+                munSelect.innerHTML = '<option value="">Cargando municipios...</option>';
+
+                try {
+                    const response = await fetch(`https://api-colombia.com/api/v1/Department/${deptoId}/cities`);
+                    if (!response.ok) throw new Error();
+                    let ciudades = await response.json();
+                    ciudades.sort((a, b) => a.name.localeCompare(b.name));
+                    
+                    let optionsHtml = '<option value="">Seleccione...</option>';
+                    ciudades.forEach(c => {
+                        optionsHtml += `<option value="${c.name}">${c.name}</option>`;
+                    });
+                    munSelect.innerHTML = optionsHtml;
+                    munSelect.disabled = false;
+                } catch (err) {
+                    munSelect.innerHTML = '<option value="">Error al cargar</option>';
+                    console.error(err);
+                }
+            });
+        }
+
+        function validarWhatsAppColombiano(phone) {
+            return /^3[0-9]{9}$/.test(phone);
+        }
+
+        // ======== AUTENTICACIÓN ========
+        db.auth.onAuthStateChange((event, session) => {
+            currentUser = session?.user || null;
+            renderAuthUI();
+            
+            const myPostsContainer = document.getElementById('myPostsFilterContainer');
+            if (currentUser) {
+                myPostsContainer.classList.remove('hidden');
+            } else {
+                myPostsContainer.classList.add('hidden');
+                if (currentFilter === 'mis-publicaciones') currentFilter = 'todos';
+            }
+            fetchAnuncios();
+        });
+
+        function renderAuthUI() {
+            const container = document.getElementById('authContainer');
+            if (currentUser) {
+                const nombreUser = currentUser.user_metadata?.primer_nombre || "Usuario";
+                container.innerHTML = `
+                    <span class="text-xs font-semibold bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl hidden sm:inline">Hola, ${nombreUser}</span>
+                    <button onclick="abrirModalPublicar(false)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl font-medium transition shadow-sm flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        <span>Publicar</span>
+                    </button>
+                    <button onclick="cerrarSesion()" class="text-slate-500 hover:text-red-500 px-2 font-medium text-sm transition">Salir</button>
+                `;
+            } else {
+                container.innerHTML = `
+                    <button onclick="abrirAuth(true)" class="text-slate-600 hover:text-indigo-600 font-medium px-2 py-2 text-sm transition">Ingresar</button>
+                    <button onclick="abrirAuth(false)" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-xl font-medium text-sm transition shadow-sm">Registro</button>
+                `;
+            }
+        }
+
+        function abrirAuth(isLogin) {
+            isLoginMode = isLogin;
+            const extraFields = document.getElementById('registerExtraFields');
+            document.getElementById('authTitle').innerText = isLogin ? 'Iniciar Sesión' : 'Crear Cuenta';
+            document.getElementById('authSubtitle').innerText = isLogin ? 'Usa tu WhatsApp colombiano y tu PIN de 4 dígitos' : 'Completa todos los campos para registrarte en OFERTAL';
+            document.getElementById('btnAuth').innerText = isLogin ? 'Ingresar' : 'Registrarse';
+            document.getElementById('authToggleText').innerText = isLogin ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?';
+            document.getElementById('authToggleBtn').innerText = isLogin ? 'Regístrate' : 'Inicia Sesión';
+            
+            if (isLogin) {
+                extraFields.classList.add('hidden');
+            } else {
+                extraFields.classList.remove('hidden');
+            }
+            document.getElementById('authModal').classList.remove('hidden');
+        }
+
+        function toggleAuthMode() { abrirAuth(!isLoginMode); }
+
+        document.getElementById('authForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const phone = document.getElementById('authPhone').value.trim();
+            const pin = document.getElementById('authPin').value.trim();
+            
+            if (!validarWhatsAppColombiano(phone)) {
+                alert("¡Error de validación! El número debe ser de Colombia (10 dígitos y empezar con 3).");
+                return;
+            }
+
+            const mockEmail = `${phone}@ofertal.com`;
+            const mockPassword = `${pin}${CONSTANT_SALT}`;
+            const btn = document.getElementById('btnAuth');
+            btn.innerText = "Procesando..."; btn.disabled = true;
+
+            try {
+                if (isLoginMode) {
+                    const { error } = await db.auth.signInWithPassword({ email: mockEmail, password: mockPassword });
+                    if (error) throw error;
+                    cerrarModales();
+                    document.getElementById('authForm').reset();
+                } else {
+                    const nombre = document.getElementById('authNombre').value.trim();
+                    const edad = document.getElementById('authEdad').value.trim();
+                    const deptoSelect = document.getElementById('authDepartamento');
+                    const departamentoName = deptoSelect.options[deptoSelect.selectedIndex]?.text || "";
+                    const municipioName = document.getElementById('authMunicipio').value;
+
+                    const { error } = await db.auth.signUp({
+                        email: mockEmail,
+                        password: mockPassword,
+                        options: {
+                            data: {
+                                whatsapp: phone,
+                                primer_nombre: nombre,
+                                edad: parseInt(edad),
+                                departamento: departamentoName,
+                                municipio: municipioName
+                            }
+                        }
+                    });
+                    if (error) throw error;
+                    alert("¡Registro exitoso! Ya puedes iniciar sesión.");
+                    abrirAuth(true);
+                }
+            } catch (err) {
+                if (err.message && err.message.includes('security purposes')) {
+                    alert("Por seguridad del sistema, debes esperar unos 30 segundos.");
+                } else {
+                    alert(isLoginMode ? "Datos incorrectos. Verifica tu número y PIN." : "Error al registrar. Es posible que este número ya exista.");
+                }
+                console.error(err);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = isLoginMode ? 'Ingresar' : 'Registrarse';
+            }
+        });
+
+        async function cerrarSesion() { 
+            await db.auth.signOut(); 
+            resetFiltros();
+        }
+
+        // ======== LECTURA, REGLAS DE FILTRADO Y ENRUTADOR COMPARTIBLE ========
+        async function fetchAnuncios() {
+            try {
+                let query = db.from('anuncios').select('*');
+                
+                // Si está en "mis-publicaciones", forzar traer solo las propias
+                if (currentFilter === 'mis-publicaciones' && currentUser) {
+                    query = query.eq('user_id', currentUser.id);
+                }
+                
+                const { data, error } = await query.order('created_at', { ascending: false });
+                if (error) throw error;
+                
+                anunciosData = data || [];
+                renderFeed();
+                checkHashRoute(); // Validar si el link contiene un anuncio compartido por Hash
+            } catch (error) {
+                console.error('Error al obtener anuncios:', error.message);
+            } finally {
+                loader.classList.add('hidden');
+            }
+        }
+
+        searchInput.addEventListener('input', (e) => {
+            searchTerm = e.target.value.toLowerCase();
+            renderFeed();
+        });
+
+        function resetFiltros() {
+            currentFilter = 'todos';
+            searchTerm = '';
+            searchInput.value = '';
+            actualizarBotonesFiltroVisual();
+            fetchAnuncios();
+        }
+
+        function actualizarBotonesFiltroVisual() {
+            document.querySelectorAll('.filter-btn').forEach(b => {
+                b.classList.remove('bg-slate-800', 'text-white');
+                if (b.dataset.filter === currentFilter) {
+                    b.classList.add('bg-slate-800', 'text-white');
+                } else if (b.dataset.filter === 'mis-publicaciones') {
+                    b.classList.add('bg-white', 'text-indigo-600', 'border-indigo-200');
+                } else {
+                    b.classList.add('bg-white', 'text-slate-600', 'border-slate-200');
+                }
+            });
+        }
+
+        function renderFeed() {
+            const filtrados = anunciosData.filter(anuncio => {
+                const isOwnPost = currentUser && anuncio.user_id === currentUser.id;
+
+                // REQUISITO: "Mis Publicaciones" solo aparecen ahí. Se ocultan por completo de Todos, Productos o Servicios.
+                if (currentFilter === 'mis-publicaciones') {
+                    return isOwnPost;
+                } else {
+                    if (isOwnPost) return false; // Bloqueo en feeds generales
+
+                    const matchTipo = currentFilter === 'todos' || anuncio.tipo === currentFilter;
+                    const matchBusqueda = anuncio.titulo.toLowerCase().includes(searchTerm) || 
+                                          anuncio.descripcion.toLowerCase().includes(searchTerm) ||
+                                          (anuncio.municipio && anuncio.municipio.toLowerCase().includes(searchTerm)) ||
+                                          (anuncio.departamento && anuncio.departamento.toLowerCase().includes(searchTerm));
+                    return matchTipo && matchBusqueda;
+                }
+            });
+
+            if (filtrados.length === 0) {
+                feedContainer.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            emptyState.classList.add('hidden');
+            feedContainer.classList.remove('hidden');
+
+            feedContainer.innerHTML = filtrados.map(anuncio => {
+                const precioFormat = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(anuncio.precio);
+                
+                // REQUISITO: Generar link único compartible (#anuncio=id) e integrarlo al presionar Chat
+                const shareableLink = `${window.location.origin}${window.location.pathname}#anuncio=${anuncio.id}`;
+                const wpLink = `https://wa.me/57${anuncio.contacto}?text=Hola,%20vi%20tu%20anuncio%20en%20OFERTAL:%20${encodeURIComponent(anuncio.titulo)}.%20Puedes%20verlo%20aquí:%20${encodeURIComponent(shareableLink)}`;
+                
+                let imgs = parseImagenes(anuncio.imagen_urls);
+
+                // REQUISITO: Si no ha iniciado sesión, forzar estrictamente visualizar SOLO la primera imagen
+                if (!currentUser) {
+                    imgs = [imgs[0]];
+                }
+
+                if (carruselIndices[anuncio.id] === undefined) carruselIndices[anuncio.id] = 0;
+                const currentImgIndex = carruselIndices[anuncio.id];
+                const activeImg = imgs[currentImgIndex] || imgs[0];
+                const tagClass = anuncio.tipo === 'producto' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600';
+                
+                const showCarouselControls = currentUser && imgs.length > 1;
+                const carouselControlsHtml = showCarouselControls ? `
+                    <button onclick="cambiarImagenCarrusel('${anuncio.id}', -1, ${imgs.length}, event)" class="absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition z-10">&larr;</button>
+                    <button onclick="cambiarImagenCarrusel('${anuncio.id}', 1, ${imgs.length}, event)" class="absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition z-10">&rarr;</button>
+                ` : '';
+
+                const chatBtnHtml = currentUser ? `
+                    <a href="${wpLink}" target="_blank" onclick="event.stopPropagation();" class="text-xs font-bold text-white bg-[#25D366] hover:bg-[#20bd5a] px-3 py-2 rounded-xl transition shadow-sm flex items-center gap-1 shrink-0">Chat</a>
+                ` : '';
+
+                const isOwner = currentUser && anuncio.user_id === currentUser.id;
+                const ownerActionsHtml = isOwner ? `
+                    <div class="mt-3 pt-3 border-t border-slate-100 flex gap-2 justify-end w-full">
+                        <button onclick="abrirEditarAnuncio(${JSON.stringify(anuncio).replace(/"/g, '&quot;')}, event)" class="text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg transition border border-amber-200">Modificar</button>
+                        <button onclick="eliminarAnuncio('${anuncio.id}', event)" class="text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-lg transition border border-red-200">Eliminar</button>
+                    </div>
+                ` : '';
+
+                const ubicacionHtml = anuncio.municipio && anuncio.departamento 
+                    ? `<p class="text-[11px] font-medium text-slate-400 mt-1 flex items-center gap-0.5">
+                        <svg class="w-3 h-3 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        ${anuncio.municipio}, ${anuncio.departamento}
+                       </p>` : '';
+
+                // REQUISITO: Al hacer clic encima de la tarjeta se abre la publicación ampliada en el modal detallado
+                return `
+                    <div onclick="abrirDetalleModalById('${anuncio.id}')" class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-lg hover:scale-[1.01] cursor-pointer transition duration-300 flex flex-col group relative">
+                        <div class="relative h-52 overflow-hidden bg-slate-100 select-none">
+                            <img src="${activeImg}" alt="${anuncio.titulo}" class="w-full h-full object-cover">
+                            <div class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-xs font-bold bg-white/95 shadow-sm ${tagClass} uppercase tracking-wider">
+                                ${anuncio.tipo}
+                            </div>
+                            ${carouselControlsHtml}
+                        </div>
+                        <div class="p-4 flex flex-col flex-grow">
+                            <h3 class="text-base font-bold text-slate-800 line-clamp-1">${anuncio.titulo}</h3>
+                            ${ubicacionHtml}
+                            <p class="text-xs text-slate-500 mt-2 line-clamp-2 flex-grow leading-relaxed">${anuncio.descripcion}</p>
+                            <div class="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between gap-2">
+                                <span class="text-lg font-black text-indigo-600 break-all">${precioFormat}</span>
+                                ${chatBtnHtml}
+                            </div>
+                            ${ownerActionsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function parseImagenes(urlsField) {
+            let imgs = [];
+            try {
+                imgs = typeof urlsField === 'string' ? JSON.parse(urlsField) : urlsField;
+            } catch(e) { imgs = []; }
+            if (!Array.isArray(imgs) || imgs.length === 0) {
+                imgs = ['https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600&auto=format&fit=crop'];
+            }
+            return imgs;
+        }
+
+        window.cambiarImagenCarrusel = function(anuncioId, direccion, totalImgs, event) {
+            if(event) event.stopPropagation();
+            carruselIndices[anuncioId] = (carruselIndices[anuncioId] + direccion + totalImgs) % totalImgs;
+            renderFeed();
+        }
+
+        // ======== SISTEMA DE MODAL DETALLADO (VISTA AMPLIADA) ========
+        window.abrirDetalleModalById = function(id) {
+            const anuncio = anunciosData.find(a => a.id === id);
+            if (anuncio) {
+                mostrarModalDetalle(anuncio);
+            } else {
+                // Forzar lectura directa por si se accede mediante enlace compartido externo
+                db.from('anuncios').select('*').eq('id', id).single().then(({data, error}) => {
+                    if(!error && data) mostrarModalDetalle(data);
+                });
+            }
+        }
+
+        function mostrarModalDetalle(anuncio) {
+            // Actualizar Hash de ruta compartible
+            window.location.hash = `anuncio=${anuncio.id}`;
+            
+            currentDetailImages = parseImagenes(anuncio.imagen_urls);
+            
+            // REQUISITO: Restricción de 1 sola imagen en modal ampliado si no ha iniciado sesión
+            if (!currentUser) currentDetailImages = [currentDetailImages[0]];
+            
+            currentDetailIndex = 0;
+
+            const tagEl = document.getElementById('detailTag');
+            tagEl.innerText = anuncio.tipo;
+            if(anuncio.tipo === 'producto') {
+                tagEl.className = "px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider bg-blue-50 text-blue-600";
+            } else {
+                tagEl.className = "px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider bg-emerald-50 text-emerald-600";
+            }
+
+            document.getElementById('detailTitle').innerText = anuncio.titulo;
+            document.getElementById('detailPrice').innerText = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(anuncio.precio);
+            document.getElementById('detailDescription').innerText = anuncio.descripcion;
+            document.getElementById('detailLocation').innerHTML = `
+                <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                ${anuncio.municipio || 'Colombia'}, ${anuncio.departamento || ''}`;
+
+            renderCarouselDetalle();
+
+            // Configurar botones de acción finales del modal detallado
+            const actionsContainer = document.getElementById('detailActionsContainer');
+            const shareableLink = `${window.location.origin}${window.location.pathname}#anuncio=${anuncio.id}`;
+            const wpLink = `https://wa.me/57${anuncio.contacto}?text=Hola,%20vi%20tu%20anuncio%20en%20OFERTAL:%20${encodeURIComponent(anuncio.titulo)}.%20Puedes%20verlo%20aquí:%20${encodeURIComponent(shareableLink)}`;
+
+            let actionsHtml = `<button onclick="copyToClipboard('${shareableLink}')" class="flex-grow bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl transition text-sm">Copiar Link 🔗</button>`;
+            
+            if (currentUser) {
+                actionsHtml += `<a href="${wpLink}" target="_blank" class="flex-grow bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold py-3 rounded-xl transition text-sm flex items-center justify-center gap-1">Escribir al Chat</a>`;
+            } else {
+                actionsHtml += `<button onclick="cerrarModales(); abrirAuth(true);" class="flex-grow bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition text-sm">Inicia sesión para Chatear</button>`;
+            }
+            actionsContainer.innerHTML = actionsHtml;
+
+            document.getElementById('detailModal').classList.remove('hidden');
+        }
+
+        function renderCarouselDetalle() {
+            const bigImg = document.getElementById('detailBigImg');
+            bigImg.src = currentDetailImages[currentDetailIndex];
+
+            const controls = document.getElementById('detailCarouselControls');
+            const dotsContainer = document.getElementById('detailDotsContainer');
+            dotsContainer.innerHTML = '';
+
+            if (currentDetailImages.length > 1) {
+                controls.classList.remove('hidden');
+                currentDetailImages.forEach((_, i) => {
+                    const dot = document.createElement('span');
+                    dot.className = `w-2 h-2 rounded-full transition-all ${i === currentDetailIndex ? 'bg-white scale-125' : 'bg-white/40'}`;
+                    dotsContainer.appendChild(dot);
+                });
+            } else {
+                controls.classList.add('hidden');
+            }
+        }
+
+        document.getElementById('detailPrevBtn').addEventListener('click', () => {
+            currentDetailIndex = (currentDetailIndex - 1 + currentDetailImages.length) % currentDetailImages.length;
+            renderCarouselDetalle();
+        });
+        document.getElementById('detailNextBtn').addEventListener('click', () => {
+            currentDetailIndex = (currentDetailIndex + 1) % currentDetailImages.length;
+            renderCarouselDetalle();
+        });
+
+        window.copyToClipboard = function(text) {
+            navigator.clipboard.writeText(text).then(() => alert("¡Enlace único copiado al portapapeles con éxito!"));
+        }
+
+        function checkHashRoute() {
+            const hash = window.location.hash;
+            if (hash && hash.startsWith('#anuncio=')) {
+                const id = hash.replace('#anuncio=', '');
+                const modalVisible = !document.getElementById('detailModal').classList.contains('hidden');
+                if(!modalVisible) abrirDetalleModalById(id);
+            }
+        }
+
+        // ======== ESCRITURA Y EDICIÓN ========
+        document.getElementById('publishForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentUser) return;
+
+            const idAnuncioEdit = document.getElementById('edit_anuncio_id').value;
+            const isEditMode = idAnuncioEdit !== "";
+            const btnSubmit = document.getElementById('btnSubmit');
+            btnSubmit.innerText = 'Procesando...'; btnSubmit.disabled = true;
+
+            try {
+                const files = imageFilesInput.files;
+                let urlsImagenesFinales = [];
+
+                if (files.length > 0) {
+                    for (let i = 0; i < files.length; i++) {
+                        const file = files[i];
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+                        
+                        const { error: uploadError } = await db.storage.from('imagenes').upload(fileName, file);
+                        if (uploadError) throw new Error('Error al subir imágenes.');
+
+                        const { data: { publicUrl } } = db.storage.from('imagenes').getPublicUrl(fileName);
+                        urlsImagenesFinales.push(publicUrl);
+                    }
+                }
+
+                const deptoSelect = document.getElementById('pubDepartamento');
+                const departamentoName = deptoSelect.options[deptoSelect.selectedIndex]?.text || "";
+                const municipioName = document.getElementById('pubMunicipio').value;
+                const rawPrecio = parseFloat(document.getElementById('precio').value.replace(/\./g, ''));
+
+                if (isNaN(rawPrecio)) throw new Error('Precio inválido.');
+                const whatsappContacto = currentUser.user_metadata?.whatsapp || currentUser.email.split('@')[0];
+
+                const datosAnuncio = {
+                    titulo: document.getElementById('titulo').value.trim(),
+                    tipo: document.getElementById('tipo').value,
+                    precio: rawPrecio,
+                    descripcion: document.getElementById('descripcion').value.trim(),
+                    departamento: departamentoName,
+                    municipio: municipioName,
+                    contacto: whatsappContacto,
+                    estado: 'pendiente'
+                };
+
+                if (urlsImagenesFinales.length > 0) datosAnuncio.imagen_urls = urlsImagenesFinales;
+
+                if (isEditMode) {
+                    const { error } = await db.from('anuncios').update(datosAnuncio).eq('id', idAnuncioEdit);
+                    if (error) throw error;
+                } else {
+                    if (urlsImagenesFinales.length === 0) datosAnuncio.imagen_urls = [];
+                    datosAnuncio.user_id = currentUser.id;
+                    const { error } = await db.from('anuncios').insert([datosAnuncio]);
+                    if (error) throw error;
+                }
+
+                cerrarModales();
+                document.getElementById('publishForm').reset();
+                imagePreviewsContainer.innerHTML = '';
+                imagePreviewsContainer.classList.add('hidden');
+                
+                // REQUISITO: Mostrar el mensaje en un cuadro modal interactivo
+                document.getElementById('successModal').classList.remove('hidden');
+                await fetchAnuncios();
+                
+            } catch (error) {
+                alert(error.message || 'Error procesando publicación.');
+                console.error(error);
+            } finally {
+                btnSubmit.innerText = isEditMode ? 'Guardar Cambios' : 'Enviar Publicación';
+                btnSubmit.disabled = false;
+            }
+        });
+
+        function abrirModalPublicar(isEdit = false) {
+            if (!currentUser) { abrirAuth(true); return; }
+            document.getElementById('publishForm').reset();
+            imagePreviewsContainer.innerHTML = '';
+            imagePreviewsContainer.classList.add('hidden');
+            document.getElementById('edit_anuncio_id').value = "";
+            document.getElementById('editImgWarning').classList.add('hidden');
+            document.getElementById('pubMunicipio').disabled = true;
+            
+            document.getElementById('modalPublishTitle').innerText = isEdit ? "Modificar Publicación" : "Publicar en OFERTAL";
+            document.getElementById('btnSubmit').innerText = isEdit ? "Guardar Cambios" : "Enviar Publicación";
+            document.getElementById('publishModal').classList.remove('hidden');
+        }
+
+        window.abrirEditarAnuncio = function(anuncio, event) {
+            if(event) event.stopPropagation();
+            abrirModalPublicar(true);
+            document.getElementById('edit_anuncio_id').value = anuncio.id;
+            document.getElementById('titulo').value = anuncio.titulo;
+            document.getElementById('tipo').value = anuncio.tipo;
+            document.getElementById('descripcion').value = anuncio.descripcion;
+            document.getElementById('precio').value = new Intl.NumberFormat('es-CO').format(anuncio.precio);
+            document.getElementById('editImgWarning').classList.remove('hidden');
+
+            const deptoSelect = document.getElementById('pubDepartamento');
+            let deptoEncontradoId = "";
+            for (let i = 0; i < deptoSelect.options.length; i++) {
+                if (deptoSelect.options[i].text === anuncio.departamento) {
+                    deptoEncontradoId = deptoSelect.options[i].value; deptoSelect.value = deptoEncontradoId; break;
+                }
+            }
+            if (deptoEncontradoId) {
+                const munSelect = document.getElementById('pubMunicipio');
+                munSelect.disabled = true; munSelect.innerHTML = '<option value="">Cargando...</option>';
+                fetch(`https://api-colombia.com/api/v1/Department/${deptoEncontradoId}/cities`)
+                    .then(res => res.json()).then(ciudades => {
+                        ciudades.sort((a, b) => a.name.localeCompare(b.name));
+                        let optionsHtml = '<option value="">Seleccione...</option>';
+                        ciudades.forEach(c => { optionsHtml += `<option value="${c.name}">${c.name}</option>`; });
+                        munSelect.innerHTML = optionsHtml; munSelect.disabled = false; munSelect.value = anuncio.municipio;
+                    });
+            }
+        }
+
+        window.eliminarAnuncio = async function(id, event) {
+            if(event) event.stopPropagation();
+            if (!confirm("¿Deseas eliminar permanentemente esta publicación?")) return;
+            try {
+                const { error } = await db.from('anuncios').delete().eq('id', id);
+                if (error) throw error;
+                await fetchAnuncios();
+            } catch (err) { console.error(err); }
+        }
+
+        // ======== MODALES INTERACTIVOS Y CONFIGURACIÓN INICIAL ========
+        function cerrarModales() { 
+            document.getElementById('publishModal').classList.add('hidden'); 
+            document.getElementById('authModal').classList.add('hidden'); 
+            document.getElementById('successModal').classList.add('hidden'); 
+            document.getElementById('detailModal').classList.add('hidden'); 
+            
+            // Limpiar la ruta hash al cerrar el modal detallado de forma limpia sin recargar
+            if(window.location.hash.startsWith('#anuncio=')) {
+                history.pushState("", document.title, window.location.pathname + window.location.search);
+            }
+        }
+
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                currentFilter = e.target.dataset.filter;
+                actualizarBotonesFiltroVisual();
+                fetchAnuncios();
+            });
+        });
+
+        // Escuchar cambios manuales de Hash (Atrás/Adelante en el navegador)
+        window.addEventListener('hashchange', checkHashRoute);
+
+        // Cerrar modales clickeando afuera
+        ['publishModal', 'authModal', 'successModal', 'detailModal'].forEach(id => {
+            document.getElementById(id).addEventListener('click', (e) => {
+                if (e.target === document.getElementById(id)) cerrarModales();
+            });
+        });
+
+        async function inicializarApp() {
+            await cargarDepartamentos();
+            await configurarManejadorMunicipios('pubDepartamento', 'pubMunicipio');
+            await configurarManejadorMunicipios('authDepartamento', 'authMunicipio');
+        }
+
+        inicializarApp();
+    </script>
+</body>
+</html>
