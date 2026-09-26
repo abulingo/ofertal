@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>OFERTAL · Productos y servicios cerca de ti</title>
-  <meta name="description" content="OFERTAL: compra, vende y contrata servicios cerca de ti en Colombia. Publica gratis o cuenta qué necesitas y recibe propuestas de proveedores de tu zona.">
+  <title>OFERTAL · El marketplace de tu región</title>
+  <meta name="description" content="OFERTAL, el marketplace de tu región: compra, vende, arrienda casas y habitaciones y contrata servicios cerca de ti. Publica gratis y encuentra en el mapa lo que se ofrece en tu zona.">
   <meta name="keywords" content="ofertal, marketplace, productos, servicios, comprar, vender, clasificados, colombia, proveedores">
   <meta name="theme-color" content="#4f46e5">
   <meta property="og:title" content="OFERTAL · Productos y servicios cerca de ti">
@@ -22,6 +22,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js" defer></script>
   <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
@@ -61,6 +64,7 @@
       <div class="flex gap-5">
         <a href="#como-funciona" class="hover:text-indigo-600">Cómo funciona</a>
         <a href="#solicitudes" class="hover:text-indigo-600">Solicitudes</a>
+        <a href="#mapa" class="hover:text-indigo-600">Mapa</a>
         <a href="#soporte" class="hover:text-indigo-600">Ayuda y soporte</a>
         <a href="#terminos" class="hover:text-indigo-600">Términos y condiciones</a>
       </div>
@@ -71,7 +75,7 @@
   <nav id="navInferior" class="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 z-30 safe-bottom" aria-label="Navegación principal">
     <div class="grid grid-cols-5 h-16 text-[10px] font-semibold">
       <a href="#inicio" data-ruta="inicio" class="flex flex-col items-center justify-center gap-0.5 text-slate-500"><span class="text-xl">🏠</span><span>Inicio</span></a>
-      <a href="#solicitudes" data-ruta="solicitudes" class="flex flex-col items-center justify-center gap-0.5 text-slate-500"><span class="text-xl">🙋</span><span>Solicitudes</span></a>
+      <a href="#mapa" data-ruta="mapa" class="flex flex-col items-center justify-center gap-0.5 text-slate-500"><span class="text-xl">🗺️</span><span>Mapa</span></a>
       <button data-accion="publicar" class="flex flex-col items-center justify-center" aria-label="Publicar">
         <span class="w-12 h-12 -mt-5 rounded-full bg-indigo-600 text-white text-3xl leading-none grid place-items-center shadow-lg shadow-indigo-600/30 ring-4 ring-white">＋</span>
       </button>

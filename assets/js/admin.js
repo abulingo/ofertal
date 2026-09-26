@@ -3,6 +3,8 @@ import {
   crearCliente, esc, fmtNum, fmtCOP, precioTexto, tiempoRelativo, fechaHora, parseImagenes, errorMsg, toast, modal,
   cerrarTodosLosModales, confirmar, pedirTexto, crearMapa, llamarFuncion, debounce, estrellas, avatar, badge,
   distanciaKm, ESTADOS_ANUNCIO, ESTADOS_SOLICITUD, ESTADOS_TICKET, CATEGORIAS_TICKET, URGENCIAS, PIN_SALT,
+  subirImagen, llenarSelectDepartamentos, datosColombia, coordenadasMunicipio, MAX_FOTOS, TIPOS, etiquetaTipo,
+  detallesInmueble, textoVence,
 } from './common.js';
 
 // Sesión separada de la del sitio público
@@ -34,6 +36,7 @@ const SECCIONES = [
   ['resumen', '📊', 'Resumen'],
   ['ofertas', '🛍️', 'Ofertas', 'anuncios'],
   ['solicitudes', '🙋', 'Solicitudes', 'solicitudes'],
+  ['whatsapp', '📲', 'Importar de WhatsApp'],
   ['usuarios', '👥', 'Usuarios'],
   ['mapa', '🗺️', 'Mapa de ubicaciones'],
   ['soporte', '🛟', 'Soporte', 'tickets'],
@@ -123,8 +126,13 @@ async function entrar(user) {
   A.user = user;
   const { data: p } = await db.from('perfiles').select('*').eq('id', user.id).single();
   A.perfil = p;
-  const { data: cats } = await db.from('categorias').select('*').order('orden');
+  const [{ data: cats }, { data: cfg }] = await Promise.all([
+    db.from('categorias').select('*').order('orden'),
+    db.from('config').select('clave, valor'),
+  ]);
   A.categorias = cats || [];
+  A.config = Object.fromEntries((cfg || []).map((c) => [c.clave, c.valor]));
+  db.rpc('procesar_vencimientos').then(() => {});
   $('#vistaLogin').classList.add('hidden');
   $('#vistaPanel').classList.remove('hidden');
   $('#adminNombre').textContent = `${p?.nombre || 'Administrador'} · ${user.email?.endsWith('@ofertal.com') && /^3\d{9}@/.test(user.email) ? user.email.split('@')[0] : user.email}`;
@@ -291,13 +299,14 @@ async function secResumen() {
   const maxDep = Math.max(1, ...(st.por_departamento || []).map((d) => d.total));
 
   contenido.innerHTML = `
-    <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+    <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
       ${statTile('Usuarios', st.usuarios, `+${st.usuarios_nuevos_7d} en 7 días`, '#usuarios')}
       ${statTile('Activos 24 h', st.usuarios_activos_24h, `${st.ubicacion_reciente} con ubicación reciente`, '#mapa')}
       ${statTile('Ofertas publicadas', st.anuncios_aprobados, `${st.anuncios_total} en total`, '#ofertas')}
       ${statTile('Solicitudes abiertas', st.solicitudes_abiertas, `${st.solicitudes_asignadas} asignadas · ${st.propuestas_total} propuestas`, '#solicitudes')}
       ${statTile('Tickets abiertos', st.tickets_abiertos, `${st.tickets_sin_leer} sin leer`, '#soporte')}
       ${statTile('Reportes pendientes', st.reportes_pendientes, `${st.usuarios_suspendidos} usuarios suspendidos`, '#reportes')}
+      ${statTile('Desde WhatsApp', st.anuncios_whatsapp, `${st.importados_activados} cuentas activadas · ${st.importados_pendientes} por activar`, '#whatsapp')}
     </div>
     ${st.anuncios_pendientes || st.solicitudes_pendientes ? `
       <div class="mt-4 rounded-2xl bg-amber-50 border border-amber-200 p-4 flex flex-wrap items-center gap-3 justify-between">
@@ -334,7 +343,7 @@ async function secResumen() {
           return `<div class="py-2.5 flex items-center gap-3">
             <img src="${esc(parseImagenes(a.imagen_urls)[0])}" class="w-12 h-12 rounded-lg object-cover cursor-pointer" data-a="ver-anuncio" data-id="${a.id}">
             <div class="min-w-0 grow"><p class="text-sm font-semibold truncate cursor-pointer hover:text-indigo-600" data-a="ver-anuncio" data-id="${a.id}">${esc(a.titulo)}</p>
-              <p class="text-[11px] text-slate-500">${esc(u.nombre || '')} · ${precioTexto(a.precio, a.precio_negociable)} · ${tiempoRelativo(a.created_at)} ${riesgoBadge(a.ia_analisis)}</p></div>
+              <p class="text-[11px] text-slate-500">${esc(u.nombre || '')} · ${precioTexto(a.precio, a.precio_negociable, a.operacion)} · ${tiempoRelativo(a.created_at)} ${riesgoBadge(a.ia_analisis)}</p></div>
             <button data-a="aprobar-anuncio" data-id="${a.id}" class="btn btn-verde !py-1.5 !px-2.5 text-xs">✓</button>
             <button data-a="rechazar-anuncio" data-id="${a.id}" class="btn btn-rojo !py-1.5 !px-2.5 text-xs">✕</button>
           </div>`;
@@ -467,10 +476,10 @@ function filaAnuncio(a) {
     <td class="p-3"><div class="flex gap-3 cursor-pointer" data-a="ver-anuncio" data-id="${a.id}">
       <img src="${esc(parseImagenes(a.imagen_urls)[0])}" class="w-14 h-14 rounded-lg object-cover shrink-0">
       <div class="min-w-0"><p class="font-semibold line-clamp-2 hover:text-indigo-600">${a.destacado ? '⭐ ' : ''}${esc(a.titulo)}</p>
-      <p class="text-[11px] text-slate-500">${a.tipo} · ${esc(a.categoria || 'Sin categoría')} · ${tiempoRelativo(a.created_at)}</p>
+      <p class="text-[11px] text-slate-500">${esc(etiquetaTipo(a))} · ${esc(a.categoria || 'Sin categoría')} · ${tiempoRelativo(a.created_at)}${a.fuente === 'whatsapp' ? ' · 📲 WhatsApp' : ''}${a.estado === 'aprobado' && a.vence_at ? ' · ⏳ ' + textoVence(a.vence_at) : ''}</p>
       <div class="mt-1">${riesgoBadge(a.ia_analisis)}</div></div></div></td>
     <td class="p-3"><button data-a="ver-usuario" data-id="${a.user_id}" class="text-left hover:text-indigo-600"><p class="font-semibold">${esc(u.nombre || '—')} ${u.verificado ? '<span class="text-sky-500">✔</span>' : ''}${u.estado === 'suspendido' ? ' <span class="text-rose-600 text-[10px] font-bold">SUSPENDIDO</span>' : ''}</p><p class="text-[11px] text-slate-500">${esc(a.contacto || u.whatsapp || '')}</p></button></td>
-    <td class="p-3 font-semibold whitespace-nowrap">${precioTexto(a.precio, a.precio_negociable)}</td>
+    <td class="p-3 font-semibold whitespace-nowrap">${precioTexto(a.precio, a.precio_negociable, a.operacion)}</td>
     <td class="p-3 text-xs text-slate-600">${esc(a.municipio || '—')}<br><span class="text-slate-400">${esc(a.departamento || '')}</span></td>
     <td class="p-3">${badge(ESTADOS_ANUNCIO[a.estado])}<p class="text-[10px] text-slate-400 mt-1">👁 ${fmtNum(a.vistas)}</p></td>
     <td class="p-3"><div class="flex justify-end gap-1 flex-wrap">
@@ -516,7 +525,7 @@ async function verAnuncio(id) {
       <div class="space-y-4">
         <div class="grid grid-cols-3 gap-2">${parseImagenes(a.imagen_urls).map((src) => `<a href="${esc(src)}" target="_blank"><img src="${esc(src)}" class="w-full aspect-square object-cover rounded-xl"></a>`).join('')}</div>
         <div class="flex flex-wrap gap-1.5">${badge(ESTADOS_ANUNCIO[a.estado])} ${riesgoBadge(ia)} ${a.destacado ? badge(['⭐ Destacado', 'bg-amber-100 text-amber-800']) : ''}</div>
-        <p class="text-2xl font-black text-indigo-600">${precioTexto(a.precio, a.precio_negociable)}</p>
+        <p class="text-2xl font-black text-indigo-600">${precioTexto(a.precio, a.precio_negociable, a.operacion)}</p>
         <div class="grid grid-cols-2 gap-2 text-xs">
           <div class="rounded-lg bg-slate-50 p-2"><span class="text-slate-400 block">Categoría</span><select data-cat class="campo !py-1 !text-xs mt-1"><option value="">Sin categoría</option>${A.categorias.map((c) => `<option ${c.nombre === a.categoria ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('')}</select></div>
           <div class="rounded-lg bg-slate-50 p-2"><span class="text-slate-400 block">Declarado</span><b>${esc(a.municipio || '—')}, ${esc(a.departamento || '')}</b></div>
@@ -695,13 +704,14 @@ async function secUsuarios(idAbrir) {
     verificados: (u) => u.verificado,
     suspendidos: (u) => u.estado === 'suspendido',
     admins: (u) => u.rol === 'admin',
+    importados: (u) => u.origen === 'whatsapp' && !u.registro_completo,
     sin_terminos: (u) => !u.terminos_aceptados_at,
   };
   const txt = f.q.toLowerCase();
   const lista = todos.filter(filtros[f.filtro]).filter((u) => !txt || [u.nombre, u.whatsapp, u.municipio, u.departamento].some((v) => (v || '').toLowerCase().includes(txt)));
   contenido.innerHTML = `
     <div class="flex flex-wrap gap-3 items-center justify-between">
-      ${tabs(Object.keys(filtros).map((k) => [k, { todos: 'Todos', activos24: 'Activos 24 h', sin_ubicacion: 'Sin ubicación', verificados: 'Verificados', suspendidos: 'Suspendidos', admins: 'Administradores', sin_terminos: 'Sin aceptar términos' }[k], todos.filter(filtros[k]).length]), f.filtro, 'filtro')}
+      ${tabs(Object.keys(filtros).map((k) => [k, { todos: 'Todos', activos24: 'Activos 24 h', sin_ubicacion: 'Sin ubicación', verificados: 'Verificados', suspendidos: 'Suspendidos', admins: 'Administradores', sin_terminos: 'Sin aceptar términos', importados: 'WhatsApp sin activar' }[k], todos.filter(filtros[k]).length]), f.filtro, 'filtro')}
       <input id="fBuscar" type="search" class="campo !py-2 text-sm w-64" placeholder="Nombre, WhatsApp, municipio…" value="${esc(f.q)}">
     </div>
     <div class="tarjeta mt-3 overflow-x-auto">
@@ -712,7 +722,7 @@ async function secUsuarios(idAbrir) {
         <tbody class="divide-y divide-slate-50">${lista.map((u) => `
           <tr class="fila cursor-pointer" data-a="ver-usuario" data-id="${u.id}">
             <td class="p-3"><div class="flex items-center gap-2.5">${avatar(u, 'w-9 h-9 text-sm')}<div><p class="font-semibold">${esc(u.nombre || 'Sin nombre')} ${u.verificado ? '<span class="text-sky-500">✔</span>' : ''}</p>
-              <p class="flex gap-1 mt-0.5">${u.rol === 'admin' ? badge(['Admin', 'bg-indigo-100 text-indigo-800']) : ''}${u.estado === 'suspendido' ? badge(['Suspendido', 'bg-rose-100 text-rose-800']) : ''}</p></div></div></td>
+              <p class="flex gap-1 mt-0.5">${u.rol === 'admin' ? badge(['Admin', 'bg-indigo-100 text-indigo-800']) : ''}${u.estado === 'suspendido' ? badge(['Suspendido', 'bg-rose-100 text-rose-800']) : ''}${u.origen === 'whatsapp' ? badge(u.registro_completo ? ['📲 WhatsApp · activada', 'bg-emerald-100 text-emerald-800'] : ['📲 WhatsApp · sin activar', 'bg-sky-100 text-sky-800']) : ''}</p></div></div></td>
             <td class="p-3 tabular-nums">${esc(u.whatsapp || '')}</td>
             <td class="p-3 text-xs">${esc(u.municipio || '—')}<br><span class="text-slate-400">${esc(u.departamento || '')}</span></td>
             <td class="p-3 text-center tabular-nums">${u.num_anuncios} / ${u.num_solicitudes}</td>
@@ -760,7 +770,9 @@ async function verUsuario(id) {
         <div class="flex flex-wrap gap-2">
           <button data-a="u-verificar" data-id="${id}" data-valor="${u.verificado ? '0' : '1'}" class="btn btn-suave text-xs">${u.verificado ? 'Quitar verificación' : '✔ Verificar identidad'}</button>
           ${u.estado === 'activo' ? `<button data-a="u-suspender" data-id="${id}" class="btn btn-rojo text-xs">⛔ Suspender</button>` : `<button data-a="u-activar" data-id="${id}" class="btn btn-verde text-xs">✓ Reactivar</button>`}
+          <button data-a="u-editar" data-id="${id}" class="btn btn-suave text-xs">✏️ Corregir datos</button>
           <button data-a="u-notificar" data-id="${id}" class="btn btn-suave text-xs">🔔 Enviar notificación</button>
+          ${u.origen === 'whatsapp' && !u.registro_completo ? `<button data-a="wa-mensaje" data-id="${id}" class="btn btn-verde text-xs">📲 Mensaje de activación</button>` : ''}
           <button data-a="u-reset-pin" data-id="${id}" data-tel="${esc(u.whatsapp || '')}" class="btn btn-suave text-xs">🔑 Restablecer PIN</button>
           ${id !== A.user.id ? `<button data-a="u-rol" data-id="${id}" data-valor="${u.rol === 'admin' ? 'usuario' : 'admin'}" class="btn btn-suave text-xs">${u.rol === 'admin' ? 'Quitar rol admin' : '🛡️ Hacer administrador'}</button>` : ''}
           <a href="index.html#usuario=${id}" target="_blank" class="btn btn-suave text-xs">Perfil público ↗</a>
@@ -978,7 +990,7 @@ async function abrirTicket(id) {
 
 function burbujaAdmin(m) {
   return `<div class="flex ${m.es_admin ? 'justify-end' : 'justify-start'}" ${m.id ? `data-tm="${m.id}"` : ''}>
-    <div class="max-w-[80%]"><p class="text-[10px] font-bold mb-1 ${m.es_admin ? 'text-right text-indigo-600' : 'text-slate-400'}">${m.es_admin ? '🛟 Soporte' : '👤 Usuario'} · ${fechaHora(m.created_at)}</p>
+    <div class="max-w-[80%]"><p class="text-[10px] font-bold mb-1 ${m.es_admin ? 'text-right text-indigo-600' : 'text-slate-400'}">${m.es_ia ? '🤖 Asistente IA' : m.es_admin ? '🛟 Soporte' : '👤 Usuario'} · ${fechaHora(m.created_at)}</p>
     <div class="px-4 py-2.5 text-sm whitespace-pre-wrap break-words shadow-sm ${m.es_admin ? 'burbuja-yo' : 'burbuja-otro'}">${esc(m.texto)}</div></div></div>`;
 }
 
@@ -1200,11 +1212,14 @@ async function secConfig() {
         ${interruptor('auto_aprobar_solicitudes', 'Publicar solicitudes sin revisión')}
         ${interruptor('ia_auto_aprobar', 'Aprobación automática con IA')}
         ${numero('max_publicaciones_dia', 'Límite diario por usuario', 1, 200, 'pub.')}
+        ${numero('dias_vigencia', 'Días de vigencia de cada publicación', 1, 120, 'días')}
+        ${numero('max_ia_dia', 'Consultas de IA por usuario al día', 0, 100, 'usos')}
       </section>
       <section class="tarjeta divide-y divide-slate-50">
         <h2 class="font-bold p-4">Ubicación y privacidad</h2>
         ${interruptor('requerir_ubicacion', 'Exigir ubicación para publicar')}
         ${numero('radio_zona_m', 'Radio de la zona pública', 300, 10000, 'm')}
+        ${numero('radio_zona_municipio_m', 'Radio para publicaciones importadas (municipio)', 500, 20000, 'm')}
         <div class="p-4 text-xs text-slate-600 bg-slate-50">
           <b>¿Cómo se protege la ubicación?</b> El usuario envía su posición exacta a una función privada. Los demás solo ven un círculo del radio configurado cuyo centro se desplaza al azar entre el 30 % y el 80 % del radio respecto del punto real. El círculo solo se regenera cuando el usuario sale de él, así que repetir la misma posición no permite promediar para descubrir el punto real.
         </div>
@@ -1277,6 +1292,540 @@ async function secCuenta() {
 }
 
 // ======================================================================
+// IMPORTAR DESDE GRUPOS DE WHATSAPP
+// ======================================================================
+const SITIO = new URL('./', location.href).href;
+const WA = { borradores: [], zip: null, pestana: 'importar' };
+const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' };
+const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+window.addEventListener('beforeunload', (e) => {
+  if (WA.borradores.some((b) => b.estado === 'borrador')) { e.preventDefault(); e.returnValue = ''; }
+});
+
+async function cargarJSZip() {
+  if (window.JSZip) return window.JSZip;
+  await new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    sc.onload = res; sc.onerror = rej;
+    document.head.appendChild(sc);
+  });
+  return window.JSZip;
+}
+
+function telefonoDe(texto) {
+  const d = String(texto || '').replace(/\D/g, '');
+  const m = d.match(/^(?:57)?(3\d{9})$/);
+  return m ? m[1] : '';
+}
+function telefonoEnTexto(texto) {
+  const m = String(texto || '').match(/(?:\+?57[\s.-]?)?\b(3\d{2})[\s.-]?(\d{3})[\s.-]?(\d{4})\b/);
+  return m ? m[1] + m[2] + m[3] : '';
+}
+
+function fechaMensaje(fecha, hora, ampm) {
+  const f = String(fecha || '').split('/').map((x) => parseInt(x, 10));
+  if (f.length !== 3 || !hora) return null;
+  let [h, mi] = hora.split(':').map((x) => parseInt(x, 10));
+  const pm = /p/i.test(ampm || '');
+  if (ampm && pm && h < 12) h += 12;
+  if (ampm && !pm && h === 12) h = 0;
+  const anio = f[2] < 100 ? 2000 + f[2] : f[2];
+  const d = new Date(anio, f[1] - 1, f[0], h, mi);
+  return isNaN(d) ? null : d;
+}
+
+// Entiende chats exportados (Android/iPhone), mensajes copiados de WhatsApp Web o un texto suelto.
+function analizarChat(textoCrudo) {
+  const texto = String(textoCrudo || '').replace(/[‎‏‪-‮⁦-⁩﻿]/g, '').replace(/[  ]/g, ' ').replace(/\r/g, '');
+  const RE = [
+    { re: /^(\d{1,2}\/\d{1,2}\/\d{2,4}),?\s+(\d{1,2}:\d{2})(?::\d{2})?\s*([ap]\.?\s?m\.?)?\s*[-–]\s*([^:]{1,60}?):\s?(.*)$/i, orden: 'fh' },
+    { re: /^\[(\d{1,2}\/\d{1,2}\/\d{2,4}),?\s+(\d{1,2}:\d{2})(?::\d{2})?\s*([ap]\.?\s?m\.?)?\]\s*([^:]{1,60}?):\s?(.*)$/i, orden: 'fh' },
+    { re: /^\[(\d{1,2}:\d{2})(?::\d{2})?\s*([ap]\.?\s?m\.?)?,\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\]\s*([^:]{1,60}?):\s?(.*)$/i, orden: 'hf' },
+  ];
+  const mensajes = [];
+  let actual = null;
+  for (const linea of texto.split('\n')) {
+    let m = null;
+    for (const { re, orden } of RE) {
+      const x = linea.match(re);
+      if (x) { m = orden === 'fh' ? { fecha: x[1], hora: x[2], ampm: x[3], rem: x[4], txt: x[5] } : { fecha: x[3], hora: x[1], ampm: x[2], rem: x[4], txt: x[5] }; break; }
+    }
+    if (m) {
+      actual = { remitente: m.rem.trim(), texto: m.txt, fecha: fechaMensaje(m.fecha, m.hora, m.ampm) };
+      mensajes.push(actual);
+    } else if (actual) {
+      actual.texto += '\n' + linea;
+    } else if (linea.trim()) {
+      actual = { remitente: '', texto: linea, fecha: null };
+      mensajes.push(actual);
+    }
+  }
+  // Adjuntos y limpieza
+  const RE_ADJ = [/([\w@.+-]+\.(?:jpe?g|png|webp|gif|heic))\s*\((?:archivo adjunto|file attached)\)/gi, /<(?:adjunto|attached):\s*([^>]+)>/gi];
+  const RE_RUIDO = /^(<multimedia omitido>|<media omitted>|se eliminó este mensaje\.?|este mensaje fue eliminado\.?|mensaje eliminado|null|imagen omitida|image omitted)$/i;
+  mensajes.forEach((msj) => {
+    msj.adjuntos = [];
+    RE_ADJ.forEach((re) => { msj.texto = msj.texto.replace(re, (_, archivo) => { msj.adjuntos.push(archivo.trim()); return ''; }); });
+    msj.texto = msj.texto.split('\n').filter((l) => !RE_RUIDO.test(l.trim())).join('\n').trim();
+    msj.telefono = telefonoDe(msj.remitente) || '';
+  });
+  // Mensajes seguidos de la misma persona (fotos + texto) forman una sola publicación
+  const grupos = [];
+  for (const msj of mensajes) {
+    if (!msj.texto && !msj.adjuntos.length) continue;
+    const ult = grupos[grupos.length - 1];
+    const mismo = ult && msj.remitente && ult.remitente === msj.remitente
+      && (!msj.fecha || !ult.fecha || Math.abs(msj.fecha - ult.fecha) < 20 * 60 * 1000);
+    if (mismo) {
+      ult.texto = [ult.texto, msj.texto].filter(Boolean).join('\n');
+      ult.adjuntos.push(...msj.adjuntos);
+      ult.fecha = msj.fecha || ult.fecha;
+    } else {
+      grupos.push({ ...msj, adjuntos: [...msj.adjuntos] });
+    }
+  }
+  return grupos
+    .map((g) => ({ ...g, telefono: g.telefono || telefonoEnTexto(g.texto) }))
+    .filter((g) => g.texto.replace(/\s/g, '').length >= 8 || g.adjuntos.length);
+}
+
+function mensajeActivacion({ registro_completo, nombre, token, publicaciones = [] }) {
+  const plantilla = String((registro_completo ? A.config.mensaje_whatsapp_registrado : A.config.mensaje_whatsapp) || '');
+  const pubs = publicaciones.map((p) => `• ${p.titulo}\n👉 ${SITIO}#anuncio=${p.id}`).join('\n');
+  return plantilla.replaceAll('{publicaciones}', pubs)
+    .replaceAll('{enlace_activacion}', token ? `${SITIO}#activar=${token}` : SITIO)
+    .replaceAll('{enlace_sitio}', SITIO)
+    .replaceAll('{nombre}', nombre || '')
+    .replaceAll('{titulo}', publicaciones[0]?.titulo || '');
+}
+
+function panelMensaje(tel, texto, userId) {
+  return `<div class="rounded-xl bg-emerald-50 border border-emerald-200 p-3 space-y-2">
+    <p class="text-xs font-bold text-emerald-800">Mensaje para ${esc(tel)} (puedes editarlo antes de enviarlo)</p>
+    <textarea data-msj-texto rows="8" class="campo text-xs !bg-white">${esc(texto)}</textarea>
+    <div class="flex flex-wrap gap-2">
+      <button data-a="wa-copiar" data-user="${userId || ''}" class="btn btn-oscuro !py-2 text-xs">📋 Copiar mensaje</button>
+      <button data-a="wa-abrir" data-tel="${esc(tel)}" data-user="${userId || ''}" class="btn btn-verde !py-2 text-xs">📲 Abrir en WhatsApp</button>
+    </div></div>`;
+}
+
+async function secWhatsapp() {
+  contenido.innerHTML = `
+    <div class="flex flex-wrap gap-2 mb-4">
+      ${[['importar', '➕ Importar publicaciones'], ['cuentas', '👥 Cuentas importadas'], ['mensaje', '✉️ Mensaje de invitación']]
+        .map(([k, t]) => `<button data-wa-tab="${k}" class="chip ${WA.pestana === k ? 'activo' : ''}">${t}</button>`).join('')}
+    </div>
+    <div id="waContenido"></div>`;
+  $$('[data-wa-tab]').forEach((b) => (b.onclick = () => { WA.pestana = b.dataset.waTab; secWhatsapp(); }));
+  if (WA.pestana === 'cuentas') return waCuentas();
+  if (WA.pestana === 'mensaje') return waPlantillas();
+  return waImportar();
+}
+
+async function waImportar() {
+  const cont = $('#waContenido');
+  const pref = (() => { try { return JSON.parse(localStorage.getItem('ofertal-wa-zona') || '{}'); } catch { return {}; } })();
+  cont.innerHTML = `
+    <section class="tarjeta p-5">
+      <h2 class="font-bold">1. Pega los mensajes del grupo o sube el chat exportado</h2>
+      <p class="text-xs text-slate-500 mt-1">Puedes pegar un solo mensaje o muchos (se detectan el número, el texto y las fotos). Para traer también las fotos:
+        en el grupo toca <b>⋮ → Más → Exportar chat → Incluir archivos</b> y sube aquí el <b>.zip</b>.</p>
+      <div class="grid lg:grid-cols-[1fr_280px] gap-4 mt-4">
+        <textarea id="waTexto" rows="7" class="campo text-sm" placeholder="Ej.:
+[26/9/26, 10:15 a. m.] +57 300 123 4567: Vendo nevera Haceb 250 L, 450 mil negociable
+o simplemente pega el texto del anuncio y escribe el número abajo."></textarea>
+        <div class="space-y-3">
+          <label class="block rounded-xl border-2 border-dashed border-slate-200 hover:border-indigo-400 p-4 text-center cursor-pointer text-sm text-slate-500">
+            📦 Subir chat exportado (.zip o .txt)
+            <input id="waArchivo" type="file" accept=".zip,.txt" class="hidden">
+            <span id="waArchivoNombre" class="block text-xs text-indigo-600 mt-1"></span>
+          </label>
+          <div><label class="etiqueta">Departamento del grupo</label><select id="waDepto" class="campo"></select></div>
+          <div><label class="etiqueta">Municipio por defecto</label><select id="waMun" class="campo"></select></div>
+          <p class="text-[11px] text-slate-400">Se usa si el mensaje no menciona el municipio. La publicación queda en el área del municipio hasta que la persona active su cuenta y comparta su ubicación.</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button id="waAnalizar" class="btn btn-primario">✨ Analizar con IA y crear borradores</button>
+        <button id="waVacio" class="btn btn-suave">➕ Borrador en blanco</button>
+      </div>
+      <p id="waProgreso" class="text-sm text-slate-500 mt-3 hidden"></p>
+    </section>
+    <div class="flex items-center justify-between mt-6 mb-3">
+      <h2 class="font-bold">2. Revisa y publica <span id="waConteo" class="text-slate-400 font-normal text-sm"></span></h2>
+      <div class="flex gap-2">
+        <button id="waLimpiar" class="btn btn-suave !py-2 text-xs">🧹 Quitar publicados y descartados</button>
+        <button id="waPublicarTodos" class="btn btn-verde !py-2 text-xs">🚀 Publicar todos los listos</button>
+      </div>
+    </div>
+    <div id="waBorradores" class="space-y-4"></div>`;
+  await llenarSelectDepartamentos($('#waDepto'), $('#waMun'), { depto: pref.depto || 'Santander', mun: pref.mun || '' });
+  const guardarPref = () => { try { localStorage.setItem('ofertal-wa-zona', JSON.stringify({ depto: $('#waDepto').value, mun: $('#waMun').value })); } catch { /* sin almacenamiento */ } };
+  $('#waDepto').addEventListener('change', guardarPref);
+  $('#waMun').addEventListener('change', guardarPref);
+
+  $('#waArchivo').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    $('#waArchivoNombre').textContent = file.name;
+    try {
+      if (/\.zip$/i.test(file.name)) {
+        const JSZip = await cargarJSZip();
+        WA.zip = await JSZip.loadAsync(file);
+        const txt = Object.values(WA.zip.files).find((f) => !f.dir && /\.txt$/i.test(f.name));
+        if (!txt) throw new Error('El .zip no contiene el chat (.txt)');
+        $('#waTexto').value = await txt.async('string');
+        const nFotos = Object.keys(WA.zip.files).filter((n) => /\.(jpe?g|png|webp|gif)$/i.test(n)).length;
+        $('#waArchivoNombre').textContent = `${file.name} · ${nFotos} fotos`;
+      } else {
+        WA.zip = null;
+        $('#waTexto').value = await file.text();
+      }
+      toast('Chat cargado. Ahora toca «Analizar con IA»', 'ok');
+    } catch (ex) { toast(errorMsg(ex), 'error'); }
+  };
+  $('#waAnalizar').onclick = () => analizarYCrearBorradores();
+  $('#waVacio').onclick = () => { WA.borradores.unshift(nuevoBorrador({ texto: '', telefono: '', adjuntos: [] }, {})); renderBorradores(); };
+  $('#waLimpiar').onclick = () => { WA.borradores = WA.borradores.filter((b) => b.estado === 'borrador'); renderBorradores(); };
+  $('#waPublicarTodos').onclick = publicarTodos;
+  renderBorradores();
+}
+
+function nuevoBorrador(g, ia) {
+  const depto = $('#waDepto')?.value || '';
+  const munDefecto = $('#waMun')?.value || '';
+  return {
+    id: Math.random().toString(36).slice(2),
+    estado: 'borrador',
+    original: g.texto || '',
+    telefono: g.telefono || '',
+    remitente: g.remitente || '',
+    fotos: [],
+    adjuntos: g.adjuntos || [],
+    campos: {
+      tipo: ia.tipo || 'producto',
+      operacion: ia.operacion || 'venta',
+      titulo: ia.titulo || '',
+      descripcion: ia.descripcion || (g.texto || '').replace(/(?:\+?57[\s.-]?)?\b3\d{2}[\s.-]?\d{3}[\s.-]?\d{4}\b/g, '').trim(),
+      categoria: ia.categoria || '',
+      precio: ia.precio || 0,
+      precio_negociable: !!ia.precio_negociable,
+      departamento: depto,
+      municipio: ia._municipio || munDefecto,
+      habitaciones: ia.habitaciones || 0, banos: ia.banos || 0, area_m2: ia.area_m2 || 0, amoblado: !!ia.amoblado,
+    },
+  };
+}
+
+async function cargarFotosZip(b) {
+  if (!WA.zip || !b.adjuntos.length) return;
+  for (const nombre of b.adjuntos) {
+    const entrada = WA.zip.file(nombre) || Object.values(WA.zip.files).find((f) => f.name.endsWith('/' + nombre) || f.name === nombre);
+    const ext = nombre.split('.').pop().toLowerCase();
+    if (!entrada || !MIME[ext] || b.fotos.length >= MAX_FOTOS) continue;
+    const blob = new Blob([await entrada.async('arraybuffer')], { type: MIME[ext] });
+    b.fotos.push({ blob, url: URL.createObjectURL(blob), nombre });
+  }
+}
+
+async function analizarYCrearBorradores() {
+  const grupos = analizarChat($('#waTexto').value);
+  if (!grupos.length) return toast('No encontramos mensajes con contenido', 'aviso');
+  const prog = $('#waProgreso');
+  prog.classList.remove('hidden');
+  const btn = $('#waAnalizar');
+  btn.disabled = true;
+  const data = await datosColombia();
+  const municipiosDepto = data[$('#waDepto').value] || [];
+  let creados = 0, descartados = 0;
+  try {
+    for (let i = 0; i < grupos.length; i += 10) {
+      const lote = grupos.slice(i, i + 10);
+      prog.textContent = `✨ La IA está leyendo los mensajes ${i + 1}–${i + lote.length} de ${grupos.length}…`;
+      const r = await llamarFuncion(db, 'ia', { accion: 'extraer_whatsapp', items: lote.map((g) => ({ texto: g.texto, fotos: g.adjuntos.length })) });
+      for (const res of r.resultados || []) {
+        const g = lote[res.i];
+        if (!g) continue;
+        if (!res.es_publicacion && !g.adjuntos.length) { descartados++; continue; }
+        const mun = municipiosDepto.find((m) => sinAcentos(m) === sinAcentos(res.municipio));
+        const b = nuevoBorrador(g, { ...res, _municipio: mun || '' });
+        await cargarFotosZip(b);
+        WA.borradores.push(b);
+        creados++;
+      }
+    }
+    prog.textContent = `✅ ${creados} borrador(es) creados${descartados ? ` · ${descartados} mensaje(s) ignorados (saludos, preguntas o sin anuncio)` : ''}. Revísalos abajo.`;
+    $('#waTexto').value = '';
+  } catch (ex) {
+    prog.textContent = '⚠️ ' + errorMsg(ex);
+  }
+  btn.disabled = false;
+  renderBorradores();
+}
+
+function opcionesCategoria(tipo, actual) {
+  const cats = A.categorias.filter((c) => c.activa && (tipo === 'inmueble' ? c.tipo === 'inmueble' : c.tipo === 'ambos' || c.tipo === tipo));
+  return '<option value="">Categoría…</option>' + cats.map((c) => `<option ${c.nombre === actual ? 'selected' : ''}>${esc(c.nombre)}</option>`).join('');
+}
+
+async function renderBorradores() {
+  const cont = $('#waBorradores');
+  if (!cont) return;
+  const pend = WA.borradores.filter((b) => b.estado === 'borrador').length;
+  $('#waConteo').textContent = WA.borradores.length ? `· ${pend} por publicar de ${WA.borradores.length}` : '';
+  if (!WA.borradores.length) {
+    cont.innerHTML = '<div class="tarjeta p-10 text-center text-sm text-slate-400">Aquí aparecerán los borradores listos para revisar y publicar.</div>';
+    return;
+  }
+  const data = await datosColombia();
+  const deptos = Object.keys(data);
+  cont.innerHTML = WA.borradores.map((b, i) => {
+    const c = b.campos;
+    if (b.estado === 'descartado') return `<div class="tarjeta p-3 text-xs text-slate-400 flex justify-between">Borrador descartado <button data-b-accion="restaurar" data-i="${i}" class="underline">Restaurar</button></div>`;
+    const bloqueado = b.estado !== 'borrador' ? 'disabled' : '';
+    return `<section class="tarjeta p-4 ${b.estado === 'publicado' ? 'ring-2 ring-emerald-300' : ''}" data-borrador="${i}">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="text-xs font-bold text-slate-400">#${i + 1}</span>
+        <input data-c="telefono" value="${esc(b.telefono)}" ${bloqueado} inputmode="numeric" maxlength="13" class="campo !w-40 !py-1.5 text-sm font-bold ${/^3\d{9}$/.test(b.telefono) ? '' : '!border-rose-300'}" placeholder="WhatsApp 3XXXXXXXXX">
+        <span data-estado-num class="text-[11px]"></span>
+        ${b.remitente && !/^3\d{9}$/.test(telefonoDe(b.remitente)) ? `<span class="text-[11px] text-slate-400">Remitente: ${esc(b.remitente)}</span>` : ''}
+        <span class="grow"></span>
+        ${b.estado === 'borrador' ? `<button data-b-accion="descartar" data-i="${i}" class="btn btn-suave !py-1.5 text-xs">Descartar</button>
+          <button data-b-accion="publicar" data-i="${i}" class="btn btn-verde !py-1.5 text-xs">✅ Publicar y crear cuenta</button>`
+          : b.estado === 'publicando' ? '<span class="text-xs text-slate-500">Publicando…</span>'
+          : `<span class="text-xs font-bold text-emerald-700">✅ Publicado</span> <a href="${SITIO}#anuncio=${b.resultado.anuncio_id}" target="_blank" class="text-xs underline text-indigo-600">Ver anuncio ↗</a>`}
+      </div>
+      <div class="grid lg:grid-cols-[1fr_1.2fr] gap-4">
+        <div class="space-y-3">
+          ${b.original ? `<details class="rounded-xl bg-slate-50 p-3"><summary class="text-xs font-bold text-slate-500">Mensaje original</summary><p class="text-xs text-slate-600 whitespace-pre-wrap mt-2">${esc(b.original)}</p></details>` : ''}
+          <div>
+            <p class="etiqueta">Fotos (${b.fotos.length}/${MAX_FOTOS}) <span class="font-normal text-slate-400">· arrastra, pega (Ctrl+V) o elige</span></p>
+            <div class="grid grid-cols-4 gap-2" data-zona-fotos="${i}" tabindex="0">
+              ${b.fotos.map((f, j) => `<div class="relative aspect-square"><img src="${f.url}" class="w-full h-full object-cover rounded-lg">${b.estado === 'borrador' ? `<button data-b-accion="quitar-foto" data-i="${i}" data-j="${j}" class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white text-[10px]">✕</button>` : ''}</div>`).join('')}
+              ${b.estado === 'borrador' && b.fotos.length < MAX_FOTOS ? `<label class="aspect-square rounded-lg border-2 border-dashed border-slate-200 hover:border-indigo-400 grid place-items-center text-slate-400 text-xs cursor-pointer text-center">📷<br>Agregar<input type="file" accept="image/*" multiple class="hidden" data-input-fotos="${i}"></label>` : ''}
+            </div>
+            ${b.adjuntos.length > b.fotos.length ? `<p class="text-[11px] text-amber-700 mt-1">${b.adjuntos.length - b.fotos.length} foto(s) del mensaje no están en el archivo subido (expórtalo con «Incluir archivos»).</p>` : ''}
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <select data-c="tipo" ${bloqueado} class="campo !py-1.5 text-sm">${Object.entries(TIPOS).map(([k, t]) => `<option value="${k}" ${c.tipo === k ? 'selected' : ''}>${t.icono} ${t.nombre}</option>`).join('')}</select>
+          ${c.tipo === 'inmueble' ? `<select data-c="operacion" ${bloqueado} class="campo !py-1.5 text-sm"><option value="venta" ${c.operacion === 'venta' ? 'selected' : ''}>En venta</option><option value="arriendo" ${c.operacion === 'arriendo' ? 'selected' : ''}>En arriendo</option></select>` : `<select data-c="categoria" ${bloqueado} class="campo !py-1.5 text-sm">${opcionesCategoria(c.tipo, c.categoria)}</select>`}
+          ${c.tipo === 'inmueble' ? `<select data-c="categoria" ${bloqueado} class="campo !py-1.5 text-sm col-span-2">${opcionesCategoria(c.tipo, c.categoria)}</select>` : ''}
+          <input data-c="titulo" ${bloqueado} value="${esc(c.titulo)}" maxlength="100" class="campo !py-1.5 text-sm col-span-2 font-semibold" placeholder="Título">
+          <textarea data-c="descripcion" ${bloqueado} rows="4" maxlength="2000" class="campo !py-1.5 text-sm col-span-2" placeholder="Descripción">${esc(c.descripcion)}</textarea>
+          <input data-c="precio" ${bloqueado} value="${c.precio ? fmtNum(c.precio) : ''}" inputmode="numeric" class="campo !py-1.5 text-sm font-bold" placeholder="${c.operacion === 'arriendo' && c.tipo === 'inmueble' ? 'Canon mensual' : 'Precio (0 = a convenir)'}">
+          <label class="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" data-c="precio_negociable" ${bloqueado} ${c.precio_negociable ? 'checked' : ''} class="accent-indigo-600"> Negociable</label>
+          ${c.tipo === 'inmueble' ? `<div class="col-span-2 grid grid-cols-4 gap-2">
+            <input data-c="habitaciones" ${bloqueado} type="number" min="0" value="${c.habitaciones || ''}" class="campo !py-1.5 text-xs" placeholder="Hab.">
+            <input data-c="banos" ${bloqueado} type="number" min="0" value="${c.banos || ''}" class="campo !py-1.5 text-xs" placeholder="Baños">
+            <input data-c="area_m2" ${bloqueado} type="number" min="0" value="${c.area_m2 || ''}" class="campo !py-1.5 text-xs" placeholder="m²">
+            <label class="flex items-center gap-1 text-xs"><input type="checkbox" data-c="amoblado" ${bloqueado} ${c.amoblado ? 'checked' : ''} class="accent-indigo-600">Amob.</label></div>` : ''}
+          <select data-c="departamento" ${bloqueado} class="campo !py-1.5 text-sm">${deptos.map((d) => `<option ${d === c.departamento ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+          <select data-c="municipio" ${bloqueado} class="campo !py-1.5 text-sm"><option value="">Municipio…</option>${(data[c.departamento] || []).map((m) => `<option ${m === c.municipio ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>
+        </div>
+      </div>
+      ${b.estado === 'publicado' ? `<div class="mt-3">${panelMensaje(b.resultado.telefono, b.mensaje, b.resultado.user_id)}</div>` : ''}
+      ${b.error ? `<p class="mt-2 text-sm text-rose-600">⚠️ ${esc(b.error)}</p>` : ''}
+    </section>`;
+  }).join('');
+
+  // Estado de cada número (nuevo, ya registrado o pendiente de activación)
+  $$('[data-borrador]', cont).forEach(async (sec) => {
+    const b = WA.borradores[+sec.dataset.borrador];
+    const el = $('[data-estado-num]', sec);
+    if (!el || !/^3\d{9}$/.test(b.telefono) || b.estado !== 'borrador') return;
+    const { data: est } = await db.rpc('estado_numero', { p_tel: b.telefono });
+    el.innerHTML = { libre: '<span class="text-sky-700">🆕 Número nuevo: se creará la cuenta</span>', registrado: '<span class="text-emerald-700">✓ Ya tiene cuenta activa</span>', pendiente: '<span class="text-amber-700">⏳ Ya importado, sin activar</span>' }[est] || '';
+  });
+}
+
+// Edición de borradores y fotos
+contenido.addEventListener('input', (e) => {
+  const sec = e.target.closest('[data-borrador]');
+  const campo = e.target.dataset.c;
+  if (!sec || !campo) return;
+  const b = WA.borradores[+sec.dataset.borrador];
+  if (campo === 'telefono') { b.telefono = e.target.value.replace(/\D/g, '').replace(/^57(?=3\d{9}$)/, ''); e.target.classList.toggle('!border-rose-300', !/^3\d{9}$/.test(b.telefono)); return; }
+  if (campo === 'precio') { const v = e.target.value.replace(/\D/g, ''); b.campos.precio = parseInt(v, 10) || 0; e.target.value = v ? fmtNum(v) : ''; return; }
+  b.campos[campo] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+});
+contenido.addEventListener('change', async (e) => {
+  const sec = e.target.closest('[data-borrador]');
+  if (!sec) return;
+  const i = +sec.dataset.borrador;
+  const b = WA.borradores[i];
+  if (e.target.dataset.inputFotos !== undefined) { await agregarFotos(b, [...e.target.files]); return renderBorradores(); }
+  const campo = e.target.dataset.c;
+  if (!campo) return;
+  b.campos[campo] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  if (campo === 'tipo') { b.campos.categoria = ''; renderBorradores(); }
+  if (campo === 'departamento') { b.campos.municipio = ''; renderBorradores(); }
+  if (campo === 'telefono') renderBorradores();
+});
+contenido.addEventListener('paste', async (e) => {
+  const zona = e.target.closest?.('[data-borrador]');
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+  if (!zona || !files.length) return;
+  e.preventDefault();
+  await agregarFotos(WA.borradores[+zona.dataset.borrador], files);
+  renderBorradores();
+});
+contenido.addEventListener('dragover', (e) => { if (e.target.closest?.('[data-zona-fotos]')) e.preventDefault(); });
+contenido.addEventListener('drop', async (e) => {
+  const zona = e.target.closest?.('[data-zona-fotos]');
+  if (!zona) return;
+  e.preventDefault();
+  await agregarFotos(WA.borradores[+zona.dataset.zonaFotos], [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')));
+  renderBorradores();
+});
+contenido.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-b-accion]');
+  if (!btn) return;
+  const b = WA.borradores[+btn.dataset.i];
+  const acc = btn.dataset.bAccion;
+  if (acc === 'descartar') b.estado = 'descartado';
+  if (acc === 'restaurar') b.estado = 'borrador';
+  if (acc === 'quitar-foto') { const [f] = b.fotos.splice(+btn.dataset.j, 1); if (f) URL.revokeObjectURL(f.url); }
+  if (acc === 'publicar') return publicarBorrador(b);
+  renderBorradores();
+});
+
+async function agregarFotos(b, files) {
+  for (const file of files) {
+    if (b.fotos.length >= MAX_FOTOS) { toast(`Máximo ${MAX_FOTOS} fotos`, 'aviso'); break; }
+    b.fotos.push({ blob: file, url: URL.createObjectURL(file), nombre: file.name });
+  }
+}
+
+async function publicarBorrador(b, { silencioso = false } = {}) {
+  const c = b.campos;
+  b.error = null;
+  if (!/^3\d{9}$/.test(b.telefono)) { b.error = 'Escribe el número de WhatsApp (10 dígitos, empieza por 3).'; return renderBorradores(); }
+  if (c.titulo.trim().length < 3) { b.error = 'Falta el título.'; return renderBorradores(); }
+  if (!c.municipio) { b.error = 'Elige el municipio.'; return renderBorradores(); }
+  b.estado = 'publicando';
+  if (!silencioso) renderBorradores();
+  try {
+    const urls = [];
+    for (const f of b.fotos) {
+      if (/heic/i.test(f.nombre)) continue;
+      urls.push(await subirImagen(db, A.user.id, f.blob, 'wa'));
+    }
+    const coords = await coordenadasMunicipio(c.municipio, c.departamento).catch(() => null);
+    const radio = Number(A.config.radio_zona_municipio_m) || 3000;
+    const r = await llamarFuncion(db, 'admin', {
+      accion: 'importar', telefono: b.telefono,
+      zona: coords ? { lat: coords.lat, lng: coords.lng, radio } : null,
+      anuncio: {
+        titulo: c.titulo, descripcion: c.descripcion || c.titulo, tipo: c.tipo, operacion: c.operacion, categoria: c.categoria,
+        precio: c.precio, precio_negociable: c.precio_negociable, departamento: c.departamento, municipio: c.municipio, imagen_urls: urls,
+        detalles: c.tipo === 'inmueble' ? { habitaciones: +c.habitaciones || 0, banos: +c.banos || 0, area_m2: +c.area_m2 || 0, amoblado: !!c.amoblado } : {},
+      },
+    });
+    b.estado = 'publicado';
+    b.resultado = r;
+    b.mensaje = mensajeActivacion(r);
+    llamarFuncion(db, 'ia', { accion: 'moderar', entidad: 'anuncio', id: r.anuncio_id }).catch(() => {});
+    if (!silencioso) toast(r.nuevo_usuario ? 'Publicado y cuenta creada ✅ Envía el mensaje' : 'Publicado en la cuenta existente ✅', 'ok');
+  } catch (ex) {
+    b.estado = 'borrador';
+    b.error = errorMsg(ex);
+  }
+  renderBorradores();
+}
+
+async function publicarTodos() {
+  const listos = WA.borradores.filter((b) => b.estado === 'borrador' && /^3\d{9}$/.test(b.telefono) && b.campos.titulo.trim().length >= 3 && b.campos.municipio);
+  if (!listos.length) return toast('No hay borradores completos (número, título y municipio)', 'aviso');
+  if (!(await confirmar(`Se publicarán ${listos.length} anuncio(s) y se crearán las cuentas que falten.`, { titulo: '¿Publicar todos?', ok: 'Publicar' }))) return;
+  for (const b of listos) await publicarBorrador(b, { silencioso: true });
+  // Si varias publicaciones son del mismo número, el último mensaje las incluye todas
+  const porTel = new Map();
+  WA.borradores.filter((b) => b.estado === 'publicado').forEach((b) => porTel.set(b.telefono, b));
+  toast(`Listo: ${listos.length} publicado(s). Envía ${porTel.size} mensaje(s) de invitación.`, 'ok', 6000);
+}
+
+async function waCuentas() {
+  const cont = $('#waContenido');
+  cont.innerHTML = '<div class="py-10 text-center text-slate-400">Cargando…</div>';
+  const { data, error } = await db.rpc('admin_importados');
+  if (error) throw error;
+  const lista = data || [];
+  const pendientes = lista.filter((x) => !x.registro_completo).length;
+  cont.innerHTML = `
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      ${statTile('Cuentas importadas', lista.length)}
+      ${statTile('Sin activar', pendientes)}
+      ${statTile('Activadas', lista.length - pendientes, lista.length ? `${Math.round(((lista.length - pendientes) / lista.length) * 100)} % de conversión` : '')}
+    </div>
+    <div class="tarjeta overflow-x-auto"><table class="w-full text-sm min-w-[820px]">
+      <thead class="text-xs text-slate-500 bg-slate-50 text-left"><tr><th class="p-3">WhatsApp</th><th class="p-3">Estado</th><th class="p-3">Publicaciones</th><th class="p-3">Importado</th><th class="p-3">Mensajes copiados</th><th class="p-3 text-right">Acciones</th></tr></thead>
+      <tbody class="divide-y divide-slate-50">${lista.map((x) => `<tr class="fila align-top">
+        <td class="p-3"><p class="font-bold tabular-nums">${esc(x.whatsapp)}</p><p class="text-xs text-slate-500">${esc(x.nombre || 'Nombre desconocido')}</p></td>
+        <td class="p-3">${x.registro_completo ? badge(['✓ Activada', 'bg-emerald-100 text-emerald-800']) : x.expira_at && new Date(x.expira_at) < new Date() ? badge(['Enlace vencido', 'bg-rose-100 text-rose-800']) : badge(['Sin activar', 'bg-amber-100 text-amber-800'])}</td>
+        <td class="p-3 text-xs">${(x.titulos || []).slice(0, 3).map((t, k) => `<button data-a="ver-anuncio" data-id="${x.ids[k]}" class="block text-left hover:text-indigo-600 truncate max-w-[260px]">• ${esc(t)}</button>`).join('')}${(x.titulos || []).length > 3 ? `<span class="text-slate-400">+${x.titulos.length - 3} más</span>` : ''}</td>
+        <td class="p-3 text-xs">${fechaHora(x.created_at)}</td>
+        <td class="p-3 text-center tabular-nums">${x.copias || 0}</td>
+        <td class="p-3"><div class="flex flex-wrap justify-end gap-1">
+          <button data-a="wa-mensaje" data-id="${x.user_id}" class="btn btn-verde !py-1.5 !px-2.5 text-xs">📲 Mensaje</button>
+          ${!x.registro_completo ? `<button data-a="wa-regenerar" data-id="${x.user_id}" class="btn btn-suave !py-1.5 !px-2.5 text-xs" title="Invalida el enlace anterior">🔄 Nuevo enlace</button>` : ''}
+          <button data-a="ver-usuario" data-id="${x.user_id}" class="btn btn-suave !py-1.5 !px-2.5 text-xs">Ver</button>
+        </div></td></tr>`).join('') || '<tr><td colspan="6" class="p-10 text-center text-slate-400">Aún no has importado publicaciones</td></tr>'}</tbody></table></div>`;
+}
+
+async function waPlantillas() {
+  const cont = $('#waContenido');
+  cont.innerHTML = `
+    <div class="grid lg:grid-cols-2 gap-5">
+      ${[['mensaje_whatsapp', 'Para personas que aún no activan su cuenta'], ['mensaje_whatsapp_registrado', 'Para personas que ya tienen cuenta']].map(([k, t]) => `
+        <section class="tarjeta p-5">
+          <h2 class="font-bold">${t}</h2>
+          <textarea data-plantilla-wa="${k}" rows="14" class="campo text-sm mt-3">${esc(A.config[k] || '')}</textarea>
+          <button data-guardar-plantilla="${k}" class="btn btn-oscuro w-full mt-3">Guardar</button>
+        </section>`).join('')}
+    </div>
+    <p class="text-xs text-slate-500 mt-3">Variables: <code>{publicaciones}</code> (títulos con enlace), <code>{enlace_activacion}</code>, <code>{enlace_sitio}</code>, <code>{nombre}</code>, <code>{titulo}</code>. Usa *texto* para negrita en WhatsApp.</p>`;
+  $$('[data-guardar-plantilla]', cont).forEach((b) => (b.onclick = async () => {
+    const k = b.dataset.guardarPlantilla;
+    const valor = $(`[data-plantilla-wa="${k}"]`, cont).value;
+    const { error } = await db.from('config').update({ valor, updated_at: new Date().toISOString() }).eq('clave', k);
+    if (error) return toast(errorMsg(error), 'error');
+    A.config[k] = valor;
+    registrar('config', 'config', k);
+    toast('Mensaje guardado', 'ok');
+  }));
+}
+
+async function sumarCopia(userId) {
+  if (!userId) return;
+  const { data } = await db.from('activaciones').select('copias').eq('user_id', userId).maybeSingle();
+  if (data) await db.from('activaciones').update({ copias: (data.copias || 0) + 1 }).eq('user_id', userId);
+}
+
+async function mostrarMensajeUsuario(userId, regenerar = false) {
+  try {
+    let r;
+    const { data: p } = await db.from('perfiles').select('id, whatsapp, nombre, registro_completo').eq('id', userId).single();
+    if (!p.registro_completo) {
+      if (regenerar) r = await llamarFuncion(db, 'admin', { accion: 'regenerar_activacion', user_id: userId });
+      else {
+        const { data: act } = await db.from('activaciones').select('token, usado_at, expira_at').eq('user_id', userId).maybeSingle();
+        r = act && !act.usado_at && new Date(act.expira_at) > new Date()
+          ? { token: act.token }
+          : await llamarFuncion(db, 'admin', { accion: 'regenerar_activacion', user_id: userId });
+      }
+    }
+    const { data: pubs } = await db.from('anuncios').select('id, titulo').eq('user_id', userId).eq('fuente', 'whatsapp').in('estado', ['aprobado', 'pendiente']).order('created_at', { ascending: false }).limit(10);
+    const texto = mensajeActivacion({ registro_completo: p.registro_completo, nombre: p.nombre, token: r?.token, publicaciones: pubs || [] });
+    const m = modal({ titulo: `📲 Mensaje para ${esc(p.whatsapp)}`, ancho: 'sm:max-w-lg', html: panelMensaje(p.whatsapp, texto, userId) });
+    acciones(m.el);
+    if (regenerar) toast('Nuevo enlace generado: el anterior ya no funciona', 'ok');
+  } catch (ex) { toast(errorMsg(ex), 'error'); }
+}
+
+// ======================================================================
 // ACCIONES
 // ======================================================================
 const refrescar = () => { actualizarPendientes(); if (!['soporte'].includes(A.seccion)) irSeccionSilenciosa(); };
@@ -1292,6 +1841,50 @@ async function pedirMotivo(titulo) {
 }
 
 const ACC = {
+  'wa-copiar': async (d, b) => {
+    const texto = b.closest('div.rounded-xl')?.querySelector('[data-msj-texto]')?.value || '';
+    await navigator.clipboard.writeText(texto).catch(() => {});
+    toast('Mensaje copiado 📋 Pégalo en el chat de WhatsApp de la persona', 'ok');
+    sumarCopia(d.user);
+  },
+  'wa-abrir': async (d, b) => {
+    const texto = b.closest('div.rounded-xl')?.querySelector('[data-msj-texto]')?.value || '';
+    window.open(`https://wa.me/57${d.tel}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+    sumarCopia(d.user);
+  },
+  'wa-mensaje': (d) => mostrarMensajeUsuario(d.id),
+  'wa-regenerar': async (d) => {
+    if (!(await confirmar('El enlace anterior dejará de funcionar.', { titulo: '¿Generar un nuevo enlace de activación?', ok: 'Generar' }))) return;
+    await mostrarMensajeUsuario(d.id, true);
+    if (A.seccion === 'whatsapp') waCuentas();
+  },
+  'u-editar': async (d) => {
+    const { data: u } = await db.from('perfiles').select('*').eq('id', d.id).single();
+    const m = modal({
+      titulo: '✏️ Corregir datos del usuario', ancho: 'sm:max-w-md',
+      html: `<form class="space-y-3">
+        <p class="text-xs text-slate-500">Los usuarios no pueden cambiar su nombre, edad ni número. Verifica su identidad antes de corregirlos.</p>
+        <div><label class="etiqueta">Nombre</label><input name="nombre" maxlength="40" class="campo" value="${esc(u.nombre || '')}"></div>
+        <div class="grid grid-cols-2 gap-3"><div><label class="etiqueta">Edad</label><input name="edad" type="number" min="14" max="110" class="campo" value="${u.edad || ''}"></div>
+          <div><label class="etiqueta">WhatsApp</label><input name="whatsapp" inputmode="numeric" maxlength="10" class="campo" value="${esc(u.whatsapp || '')}"></div></div>
+        <div class="grid grid-cols-2 gap-3"><div><label class="etiqueta">Departamento</label><select name="depto" class="campo"></select></div>
+          <div><label class="etiqueta">Municipio</label><select name="mun" class="campo"></select></div></div>
+        <p class="text-[11px] text-amber-700">Si cambias el número, el usuario deberá ingresar con el número nuevo y su mismo PIN.</p>
+        <button class="btn btn-primario w-full">Guardar</button></form>`,
+    });
+    const f = m.el.querySelector('form');
+    llenarSelectDepartamentos(f.depto, f.mun, { depto: u.departamento || '', mun: u.municipio || '' });
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await llamarFuncion(db, 'admin', { accion: 'editar_usuario', user_id: d.id, nombre: f.nombre.value, edad: f.edad.value, whatsapp: f.whatsapp.value, departamento: f.depto.value, municipio: f.mun.value });
+        A.perfiles.delete(d.id);
+        toast('Datos actualizados', 'ok');
+        cerrarTodosLosModales();
+        verUsuario(d.id);
+      } catch (ex) { toast(errorMsg(ex), 'error'); }
+    };
+  },
   'ver-anuncio': (d) => verAnuncio(d.id),
   'ver-solicitud': (d) => verSolicitud(d.id),
   'ver-usuario': (d) => verUsuario(d.id),
@@ -1450,6 +2043,7 @@ const SECCION_FN = {
   resumen: secResumen,
   ofertas: secOfertas,
   solicitudes: secSolicitudes,
+  whatsapp: secWhatsapp,
   usuarios: secUsuarios,
   mapa: secMapa,
   soporte: secSoporte,

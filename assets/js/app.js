@@ -4,7 +4,8 @@ import {
   parseImagenes, errorMsg, codigoError, distanciaKm, textoDistancia, toast, modal, cerrarTodosLosModales,
   confirmar, pedirTexto, llenarSelectDepartamentos, subirImagen, mapaZona, llamarFuncion, debounce,
   estrellas, avatar, badge, ESTADOS_ANUNCIO, ESTADOS_SOLICITUD, ESTADOS_TICKET, CATEGORIAS_TICKET, URGENCIAS,
-  PIN_SALT, COLS_ANUNCIO_PUBLICO,
+  PIN_SALT, COLS_ANUNCIO_PUBLICO, MAX_FOTOS, TIPOS, etiquetaTipo, detallesInmueble, textoVence, fotosReales,
+  SUPABASE_URL, SUPABASE_ANON_KEY,
 } from './common.js';
 import { TERMINOS_VERSION, RESPONSABLE, terminosHtml, resumenTerminosHtml } from './terminos.js';
 
@@ -64,6 +65,12 @@ async function cargarBase() {
 async function init() {
   $('#anio').textContent = new Date().getFullYear();
   await cargarBase();
+  // Visitantes que ya dieron permiso de ubicación: se usa solo en su navegador para mostrar lo cercano
+  leerPermisoUbic().then((p) => {
+    if (p === 'granted') obtenerPosicion().then((pos) => {
+      if (!S.miUbic) { S.miUbic = { lat: pos.coords.latitude, lng: pos.coords.longitude, precision: pos.coords.accuracy, ts: Date.now() }; modoRegional(); }
+    }).catch(() => {});
+  });
   db.auth.onAuthStateChange((evento, session) => {
     // Supabase recomienda no hacer llamadas dentro del callback directamente
     setTimeout(() => aplicarSesion(session, evento), 0);
@@ -121,6 +128,8 @@ const VISTAS = {
   ticket: vistaTicket,
   'como-funciona': vistaComoFunciona,
   terminos: vistaTerminos,
+  mapa: vistaMapa,
+  activar: vistaActivar,
 };
 const REQUIERE_SESION = new Set(['mis-publicaciones', 'mis-solicitudes', 'favoritos', 'mensajes', 'chat', 'notificaciones', 'perfil', 'ticket']);
 const RUTAS_MODAL = { anuncio: abrirAnuncio, solicitud: abrirSolicitud };
@@ -138,7 +147,10 @@ async function router() {
     RUTAS_MODAL[ruta](valor);
     return;
   }
-  cerrarTodosLosModales();
+  // Solo se cierran las ventanas si cambió la ruta (no al recargar la vista por el inicio de sesión)
+  const cambioRuta = location.hash !== S.ultimoHash;
+  S.ultimoHash = location.hash;
+  if (cambioRuta) cerrarTodosLosModales();
   if (REQUIERE_SESION.has(ruta) && !S.user) {
     await mostrarVista('inicio');
     abrirAuth('login');
@@ -223,7 +235,7 @@ function actualizarBadges() {
     el.textContent = n > 99 ? '99+' : n;
     el.classList.toggle('hidden', !n);
   });
-  document.title = (S.noLeidasNotif + nChat ? `(${S.noLeidasNotif + nChat}) ` : '') + 'OFERTAL · Productos y servicios cerca de ti';
+  document.title = (S.noLeidasNotif + nChat ? `(${S.noLeidasNotif + nChat}) ` : '') + 'OFERTAL · El marketplace de tu región';
 }
 
 document.addEventListener('click', (e) => {
@@ -287,7 +299,7 @@ async function mostrarSugerencias(inp) {
   const t = q.replace(/[%,()*"\\]/g, ' ').trim();
   const token = ++tokenSugerencias;
   if (t.length < 2) { $$('[data-sugerencias]').forEach((el) => el.remove()); return; }
-  let qa = db.from('anuncios').select('id,titulo,precio,precio_negociable,imagen_urls,municipio,tipo,zona_lat,zona_lng')
+  let qa = db.from('anuncios').select('id,titulo,precio,precio_negociable,imagen_urls,municipio,tipo,operacion,categoria,zona_lat,zona_lng')
     .eq('estado', 'aprobado').or(`titulo.ilike.%${t}%,descripcion.ilike.%${t}%,categoria.ilike.%${t}%,municipio.ilike.%${t}%`)
     .order('destacado', { ascending: false }).order('created_at', { ascending: false }).limit(6);
   let qs = db.from('solicitudes').select('id,titulo,presupuesto,municipio,urgencia')
@@ -306,9 +318,9 @@ async function mostrarSugerencias(inp) {
       ${anuncios.map((a) => {
         const d = distanciaA(a);
         return `<a href="#anuncio=${a.id}" data-sug class="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 focus:bg-indigo-50 outline-none">
-          <img src="${esc(parseImagenes(a.imagen_urls)[0])}" alt="" class="w-11 h-11 rounded-lg object-cover shrink-0 bg-slate-100">
+          <img src="${esc(imgsDe(a)[0])}" alt="" class="w-11 h-11 rounded-lg object-cover shrink-0 bg-slate-100">
           <span class="min-w-0 grow"><span class="block text-sm font-semibold text-slate-800 truncate">${resaltar(a.titulo, q)}</span>
-          <span class="block text-xs text-slate-500 truncate"><b class="text-slate-700">${precioTexto(a.precio, a.precio_negociable)}</b> · 📍 ${esc(a.municipio || '')}${d != null ? ' · ' + textoDistancia(d) : ''}</span></span></a>`;
+          <span class="block text-xs text-slate-500 truncate"><b class="text-slate-700">${precioDe(a)}</b> · 📍 ${esc(a.municipio || '')}${d != null ? ' · ' + textoDistancia(d) : ''}</span></span></a>`;
       }).join('')}` : ''}
     ${sols.length ? `<p class="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Personas que lo necesitan</p>
       ${sols.map((x) => `<a href="#solicitud=${x.id}" data-sug class="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 focus:bg-indigo-50 outline-none">
@@ -406,9 +418,18 @@ function obtenerPosicion() {
   });
 }
 
+function modoRegional() {
+  // Marketplace regional: si conocemos la ubicación, lo más cercano aparece primero
+  if (S.ordenManual || S.filtros.orden !== 'recientes' || !S.miUbic) return;
+  S.filtros.orden = 'cercanos';
+  if (S.vista === 'inicio' && !S.filtros.q) vistaInicio();
+}
+
 async function enviarUbicacion(pos, evento = 'seguimiento') {
   const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+  const primera = !S.miUbic;
   S.miUbic = { lat, lng, precision: accuracy, ts: Date.now() };
+  if (primera) setTimeout(modoRegional, 0);
   if (!S.user) return;
   UBIC.ultimoEnvio = Date.now();
   UBIC.ultimaPos = { lat, lng };
@@ -606,7 +627,14 @@ function abrirAuth(modo = 'login') {
         bienvenidaNuevoUsuario();
       }
     } catch (ex) {
-      mostrarError(esLogin ? errorMsg(ex, 'Número o PIN incorrectos.') : errorMsg(ex, 'No pudimos crear la cuenta. Puede que el número ya exista.'));
+      const { data: estadoNum } = await db.rpc('estado_numero', { p_tel: tel });
+      if (estadoNum === 'pendiente') {
+        mostrarError('Este número ya tiene publicaciones en OFERTAL tomadas de un grupo de WhatsApp. Para reclamar tu cuenta abre el enlace de activación que te enviamos por WhatsApp, o pídelo de nuevo en Soporte («¿Olvidaste tu PIN?»).');
+      } else if (!esLogin && estadoNum === 'registrado') {
+        mostrarError('Este número ya tiene una cuenta. Inicia sesión con tu PIN.');
+      } else {
+        mostrarError(esLogin ? errorMsg(ex, 'Número o PIN incorrectos.') : errorMsg(ex, 'No pudimos crear la cuenta. Puede que el número ya exista.'));
+      }
     } finally {
       btn.disabled = false; btn.textContent = esLogin ? 'Ingresar' : 'Crear cuenta';
     }
@@ -638,7 +666,7 @@ function bienvenidaNuevoUsuario() {
 // ======================================================================
 // TÉRMINOS Y CONDICIONES
 // ======================================================================
-const terminosAceptados = () => !S.user || !!S.perfil?.terminos_aceptados_at || S.perfil?.rol === 'admin';
+const terminosAceptados = () => !S.user || S.perfil?.rol === 'admin' || (!!S.perfil?.terminos_aceptados_at && S.perfil?.terminos_version === TERMINOS_VERSION);
 
 function abrirTerminosModal() {
   modal({ titulo: '📜 Términos y condiciones', ancho: 'sm:max-w-2xl', html: terminosHtml(), pie: '<button data-cerrar class="btn btn-oscuro w-full">Cerrar</button>' });
@@ -651,7 +679,7 @@ function modalTerminosPendientes(motivo = '') {
     html: `<div data-modal-terminos class="space-y-4">
       <div class="text-center"><div class="text-4xl">📜</div>
         <h2 class="text-xl font-bold mt-2">Términos y condiciones</h2>
-        <p class="text-sm text-slate-500 mt-1">${esc(motivo || 'Para seguir usando OFERTAL necesitamos que leas y aceptes nuestros términos y condiciones.')}</p></div>
+        <p class="text-sm text-slate-500 mt-1">${esc(motivo || (S.perfil?.terminos_aceptados_at ? 'Actualizamos nuestros términos y condiciones. Léelos y acéptalos para seguir usando OFERTAL.' : 'Para seguir usando OFERTAL necesitamos que leas y aceptes nuestros términos y condiciones.'))}</p></div>
       ${resumenTerminosHtml()}
       <button type="button" data-leer class="text-sm font-semibold text-indigo-600 hover:underline">Leer los términos completos ›</button>
       <label class="flex items-start gap-2 text-sm bg-slate-50 rounded-xl p-3 cursor-pointer">
@@ -721,7 +749,9 @@ async function cargarFavoritos() {
 }
 
 const catIcono = (nombre) => S.categorias.find((c) => c.nombre === nombre)?.icono || '📦';
-const categoriasPara = (tipo) => S.categorias.filter((c) => c.tipo === 'ambos' || c.tipo === tipo);
+const categoriasPara = (tipo) => S.categorias.filter((c) => (tipo === 'inmueble' ? c.tipo === 'inmueble' : c.tipo === 'ambos' || c.tipo === tipo));
+const imgsDe = (a) => parseImagenes(a.imagen_urls, catIcono(a.categoria) || TIPOS[a.tipo]?.icono);
+const precioDe = (a) => precioTexto(a.precio, a.precio_negociable, a.operacion);
 
 async function misCategorias() {
   if (S.misCategorias) return S.misCategorias;
@@ -762,12 +792,13 @@ function encabezadoExplorar(activo) {
       <div class="absolute -right-16 -top-16 w-72 h-72 rounded-full bg-white/10"></div>
       <div class="absolute right-24 -bottom-24 w-56 h-56 rounded-full bg-white/5"></div>
       <div class="relative max-w-2xl">
-        <p class="text-indigo-200 text-sm font-semibold mb-2">Marketplace colombiano</p>
-        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">Compra, vende y contrata servicios cerca de ti</h1>
-        <p class="text-indigo-100 mt-3 text-sm sm:text-base">Publica gratis lo que ofreces o cuenta qué necesitas: los proveedores de tu zona te enviarán propuestas.</p>
+        <p class="text-indigo-200 text-sm font-semibold mb-2">El marketplace de tu región</p>
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">Compra, vende, arrienda y contrata servicios cerca de ti</h1>
+        <p class="text-indigo-100 mt-3 text-sm sm:text-base">Productos, casas, habitaciones en arriendo y todo tipo de servicios de tu zona. Publica gratis o cuenta qué necesitas y te llegan propuestas.</p>
         <div class="flex flex-wrap gap-3 mt-6">
           <button data-accion="nueva-oferta" class="btn bg-white text-indigo-700 hover:bg-indigo-50 py-3 px-5">🛍️ Quiero ofrecer</button>
-          <button data-accion="nueva-solicitud" class="btn bg-indigo-900/40 hover:bg-indigo-900/60 text-white py-3 px-5 ring-1 ring-white/30">🙋 Necesito un servicio</button>
+          <button data-accion="nueva-solicitud" class="btn bg-indigo-900/40 hover:bg-indigo-900/60 text-white py-3 px-5 ring-1 ring-white/30">🙋 Necesito algo</button>
+          <a href="#mapa" class="btn bg-indigo-900/40 hover:bg-indigo-900/60 text-white py-3 px-5 ring-1 ring-white/30">🗺️ Ver qué hay cerca</a>
         </div>
       </div>
     </section>` : `
@@ -785,6 +816,7 @@ function encabezadoExplorar(activo) {
     <div class="mt-6 inline-flex p-1 bg-slate-200/70 rounded-2xl">
       <a href="#inicio" class="px-4 sm:px-6 py-2 rounded-xl text-sm font-bold ${activo === 'inicio' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}">🛍️ Ofertas</a>
       <a href="#solicitudes" class="px-4 sm:px-6 py-2 rounded-xl text-sm font-bold ${activo === 'solicitudes' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}">🙋 Solicitudes</a>
+      <a href="#mapa" class="px-4 sm:px-6 py-2 rounded-xl text-sm font-bold ${activo === 'mapa' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}">🗺️ Mapa</a>
     </div>`;
 }
 
@@ -806,7 +838,7 @@ async function vistaInicio() {
     </div>
     <div class="${enBusqueda ? 'mt-3' : 'mt-3'} flex flex-wrap gap-2 items-center">
       <div class="inline-flex bg-white border border-slate-200 rounded-xl p-0.5">
-        ${[['todos', 'Todo'], ['producto', 'Productos'], ['servicio', 'Servicios']].map(([v, t]) => `<button data-filtro-tipo="${v}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold ${f.tipo === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}">${t}</button>`).join('')}
+        ${[['todos', 'Todo'], ['producto', 'Productos'], ['servicio', 'Servicios'], ['inmueble', 'Inmuebles']].map(([v, t]) => `<button data-filtro-tipo="${v}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold ${f.tipo === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}">${t}</button>`).join('')}
       </div>
       <select data-filtro="departamento" class="campo !w-auto !py-2 text-xs sm:text-sm" id="filtroDepto"></select>
       ${selectDistancia(f.distancia)}
@@ -841,6 +873,7 @@ function enlazarFiltros() {
       if (!(await ubicacionLocalParaFiltro())) { s.value = k === 'distancia' ? '0' : 'recientes'; return; }
     }
     S.filtros[k] = v;
+    if (k === 'orden') S.ordenManual = true;
     cargarAnuncios(true);
   }));
 }
@@ -891,7 +924,8 @@ async function cargarAnuncios(reiniciar = true) {
 }
 
 function tarjetaAnuncio(a) {
-  const imgs = parseImagenes(a.imagen_urls);
+  const imgs = imgsDe(a);
+  const nFotos = fotosReales(a.imagen_urls).length;
   const vendedor = S.perfiles.get(a.user_id);
   const dist = textoDistancia(a._dist ?? distanciaA(a));
   const esFav = S.favoritos.has(a.id);
@@ -900,15 +934,16 @@ function tarjetaAnuncio(a) {
       <div class="relative aspect-[4/3] bg-slate-100 overflow-hidden">
         <img src="${esc(imgs[0])}" alt="" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500">
         <div class="absolute top-2 left-2 flex gap-1">
-          <span class="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-white/95 ${a.tipo === 'producto' ? 'text-blue-700' : 'text-emerald-700'}">${a.tipo}</span>
+          <span class="px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-white/95 ${(TIPOS[a.tipo] || TIPOS.producto).clase.split(' ')[0]}">${esc(etiquetaTipo(a))}</span>
           ${a.destacado ? '<span class="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-400 text-amber-950">★ DESTACADO</span>' : ''}
         </div>
-        ${imgs.length > 1 && S.user ? `<span class="absolute bottom-2 left-2 text-[10px] font-bold bg-black/55 text-white px-1.5 py-0.5 rounded">📷 ${imgs.length}</span>` : ''}
+        ${nFotos > 1 && S.user ? `<span class="absolute bottom-2 left-2 text-[10px] font-bold bg-black/55 text-white px-1.5 py-0.5 rounded">📷 ${nFotos}</span>` : ''}
         ${S.user ? `<button data-accion="favorito" data-id="${a.id}" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-white/90 grid place-items-center text-base shadow ${esFav ? 'text-rose-500' : 'text-slate-400'}" aria-label="Favorito">${esFav ? '♥' : '♡'}</button>` : ''}
       </div>
       <div class="p-3 flex flex-col grow">
-        <p class="text-base sm:text-lg font-extrabold text-slate-900">${precioTexto(a.precio, a.precio_negociable)}</p>
+        <p class="text-base sm:text-lg font-extrabold text-slate-900">${precioDe(a)}</p>
         <h3 class="text-sm font-semibold text-slate-700 line-clamp-2 leading-snug mt-0.5">${esc(a.titulo)}</h3>
+        ${a.tipo === 'inmueble' && detallesInmueble(a.detalles).length ? `<p class="text-[11px] text-slate-500 mt-1 line-clamp-1">${detallesInmueble(a.detalles).slice(0, 3).join(' · ')}</p>` : ''}
         <p class="text-[11px] text-slate-400 mt-1.5 line-clamp-1">📍 ${esc(a.municipio || 'Colombia')}${dist ? ` · ${dist}` : ''}</p>
         <div class="mt-auto pt-2 flex items-center justify-between gap-1 text-[11px] text-slate-400">
           <span class="truncate">${a.categoria ? `${catIcono(a.categoria)} ${esc(a.categoria)}` : ''}</span>
@@ -961,7 +996,7 @@ async function abrirAnuncio(id) {
   await cargarPerfiles([a.user_id]);
   const v = S.perfiles.get(a.user_id) || {};
   const esMio = S.user?.id === a.user_id;
-  let imgs = parseImagenes(a.imagen_urls);
+  let imgs = imgsDe(a);
   const totalImgs = imgs.length;
   if (!S.user) imgs = imgs.slice(0, 1);
   const enlace = `${location.origin}${location.pathname}#anuncio=${a.id}`;
@@ -985,14 +1020,17 @@ async function abrirAnuncio(id) {
       <div class="p-5 sm:p-6 space-y-5">
         <div>
           <div class="flex flex-wrap gap-1.5 mb-2">
-            <span class="px-2 py-0.5 rounded-md text-[11px] font-extrabold uppercase ${a.tipo === 'producto' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}">${a.tipo}</span>
+            <span class="px-2 py-0.5 rounded-md text-[11px] font-extrabold uppercase ${(TIPOS[a.tipo] || TIPOS.producto).clase}">${TIPOS[a.tipo]?.icono || ''} ${esc(etiquetaTipo(a))}</span>
             ${a.categoria ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-600">${catIcono(a.categoria)} ${esc(a.categoria)}</span>` : ''}
             ${esMio ? badge(ESTADOS_ANUNCIO[a.estado] || ['', '']) : ''}
           </div>
           <h2 class="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">${esc(a.titulo)}</h2>
-          <p class="text-2xl sm:text-3xl font-black text-indigo-600 mt-2">${precioTexto(a.precio, a.precio_negociable)}</p>
-          <p class="text-xs text-slate-400 mt-2">📍 ${esc(a.municipio || 'Colombia')}${a.departamento ? ', ' + esc(a.departamento) : ''} · ${tiempoRelativo(a.aprobado_at || a.created_at)} · 👁 ${fmtNum(a.vistas)} vistas${distanciaA(a) != null ? ' · ' + textoDistancia(distanciaA(a)) : ''}${a.zona_lat != null ? ' · <span class="text-emerald-600 font-semibold">✓ Ubicación registrada</span>' : ''}</p>
+          <p class="text-2xl sm:text-3xl font-black text-indigo-600 mt-2">${precioDe(a)}</p>
+          <p class="text-xs text-slate-400 mt-2">📍 ${esc(a.municipio || 'Colombia')}${a.departamento ? ', ' + esc(a.departamento) : ''} · ${tiempoRelativo(a.aprobado_at || a.created_at)} · 👁 ${fmtNum(a.vistas)} vistas${distanciaA(a) != null ? ' · ' + textoDistancia(distanciaA(a)) : ''}${a.zona_lat != null && a.zona_fuente !== 'municipio' ? ' · <span class="text-emerald-600 font-semibold">✓ Ubicación registrada</span>' : ''}</p>
+          ${a.tipo === 'inmueble' && detallesInmueble(a.detalles).length ? `<div class="flex flex-wrap gap-1.5 mt-3">${detallesInmueble(a.detalles).map((d) => `<span class="text-xs font-semibold bg-amber-50 text-amber-900 rounded-lg px-2.5 py-1">${d}</span>`).join('')}</div>` : ''}
+          ${esMio && a.vence_at && ['aprobado', 'vencido'].includes(a.estado) ? `<p class="text-xs mt-2 ${a.estado === 'vencido' ? 'text-orange-700' : 'text-slate-500'}">⏳ ${a.estado === 'vencido' ? 'Vencida: ya no se muestra' : 'Visible hasta el ' + new Date(a.vence_at).toLocaleDateString('es-CO', { day: 'numeric', month: 'long' })}</p>` : ''}
         </div>
+        ${v.registro_completo === false && !esMio ? '<div class="rounded-xl bg-sky-50 text-sky-900 text-xs p-3">📲 Esta publicación se tomó de un grupo de WhatsApp de la región y el vendedor aún no activa su cuenta en OFERTAL. Escríbele por WhatsApp para una respuesta más rápida.</div>' : ''}
         ${esMio && a.estado === 'rechazado' && a.motivo_rechazo ? `<div class="rounded-xl bg-rose-50 text-rose-800 text-sm p-3"><b>Motivo del rechazo:</b> ${esc(a.motivo_rechazo)}</div>` : ''}
         <div>
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Descripción</h3>
@@ -1008,7 +1046,7 @@ async function abrirAnuncio(id) {
         </a>
         <div>
           <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Zona de publicación</h3>
-          ${htmlZona(a, 'El vendedor publicó desde dentro de esta área.')}
+          ${htmlZona(a, a.zona_fuente === 'municipio' ? 'Área aproximada del municipio: el vendedor aún no ha registrado su ubicación.' : 'El vendedor publicó desde dentro de esta área.')}
         </div>
         <div class="rounded-xl bg-amber-50 text-amber-900 text-xs p-3">🛡️ <b>Consejo de seguridad:</b> no pagues anticipos a desconocidos, revisa el producto antes de pagar y reúnete en lugares públicos.</div>
       </div>`,
@@ -1090,7 +1128,7 @@ async function mejorarConIA(form, clase, btn) {
     form.titulo.value = r.titulo;
     form.descripcion.value = r.descripcion;
     if (r.categoria && [...form.categoria.options].some((o) => o.value === r.categoria)) form.categoria.value = r.categoria;
-    const t = toast('Texto mejorado ✨ Revísalo antes de publicar', 'ok', 6000);
+    const t = toast(`Texto mejorado ✨ Revísalo antes de publicar · Te quedan ${r.restantes} usos de IA hoy`, 'ok', 6000);
     const deshacer = document.createElement('button');
     deshacer.className = 'underline font-bold ml-2 shrink-0';
     deshacer.textContent = 'Deshacer';
@@ -1113,20 +1151,33 @@ async function formularioOferta(id = null) {
     a = data;
     if (!a) return toast('No se encontró la publicación', 'error');
   }
-  const imgsActuales = a ? parseImagenes(a.imagen_urls).filter((u) => !u.includes('unsplash.com')) : [];
+  const imgsActuales = a ? fotosReales(a.imagen_urls) : [];
+  const det = a?.detalles || {};
   let nuevas = [];
   const m = modal({
-    titulo: a ? 'Editar publicación' : 'Ofrecer producto o servicio', ancho: 'sm:max-w-xl',
+    titulo: a ? 'Editar publicación' : '¿Qué quieres ofrecer?', ancho: 'sm:max-w-xl',
     html: `<form id="fOferta" class="space-y-4">
-      <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
-        ${[['producto', '🛍️ Producto'], ['servicio', '🧰 Servicio']].map(([v, t]) => `
+      <div class="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl">
+        ${[['producto', '🛍️ Producto'], ['servicio', '🧰 Servicio'], ['inmueble', '🏠 Inmueble']].map(([v, t]) => `
           <label class="cursor-pointer"><input type="radio" name="tipo" value="${v}" class="peer sr-only" ${(a?.tipo || 'producto') === v ? 'checked' : ''}>
-          <span class="block text-center py-2 rounded-lg text-sm font-bold text-slate-500 peer-checked:bg-white peer-checked:text-indigo-700 peer-checked:shadow">${t}</span></label>`).join('')}
+          <span class="block text-center py-2 rounded-lg text-xs sm:text-sm font-bold text-slate-500 peer-checked:bg-white peer-checked:text-indigo-700 peer-checked:shadow">${t}</span></label>`).join('')}
       </div>
-      <div><label class="etiqueta">Título</label><input name="titulo" maxlength="100" required class="campo" placeholder="Ej. Bicicleta de montaña aro 29 / Plomero a domicilio" value="${esc(a?.titulo || '')}"></div>
+      <div data-solo-inmueble class="grid grid-cols-2 gap-1 p-1 bg-amber-50 rounded-xl">
+        ${[['venta', '🏷️ En venta'], ['arriendo', '🔑 En arriendo']].map(([v, t]) => `
+          <label class="cursor-pointer"><input type="radio" name="operacion" value="${v}" class="peer sr-only" ${(a?.operacion || 'venta') === v ? 'checked' : ''}>
+          <span class="block text-center py-2 rounded-lg text-sm font-bold text-amber-800/60 peer-checked:bg-white peer-checked:text-amber-900 peer-checked:shadow">${t}</span></label>`).join('')}
+      </div>
+      <div><label class="etiqueta">Título</label><input name="titulo" maxlength="100" required class="campo" placeholder="Ej. Nevera Haceb 250 L / Plomero a domicilio / Habitación amoblada en arriendo" value="${esc(a?.titulo || '')}"></div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><label class="etiqueta">Categoría</label><select name="categoria" required class="campo"></select></div>
-        <div><label class="etiqueta">Precio (COP)</label><input name="precio" inputmode="numeric" class="campo font-bold" placeholder="Ej. 50.000" value="${a && +a.precio ? fmtNum(a.precio) : ''}"></div>
+        <div><label class="etiqueta"><span data-etq-precio>Precio (COP)</span></label><input name="precio" inputmode="numeric" class="campo font-bold" placeholder="Ej. 50.000" value="${a && +a.precio ? fmtNum(a.precio) : ''}"></div>
+      </div>
+      <div data-solo-inmueble class="grid grid-cols-3 gap-3">
+        <div><label class="etiqueta">Habitaciones</label><input name="habitaciones" type="number" min="0" max="50" class="campo" value="${det.habitaciones || ''}"></div>
+        <div><label class="etiqueta">Baños</label><input name="banos" type="number" min="0" max="20" class="campo" value="${det.banos || ''}"></div>
+        <div><label class="etiqueta">Área m²</label><input name="area_m2" type="number" min="0" max="100000" class="campo" value="${det.area_m2 || ''}"></div>
+        <label class="col-span-3 sm:col-span-1 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" name="amoblado" class="accent-indigo-600" ${det.amoblado ? 'checked' : ''}> Amoblado</label>
+        <label class="col-span-3 sm:col-span-2 flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" name="servicios_incluidos" class="accent-indigo-600" ${det.servicios_incluidos ? 'checked' : ''}> Servicios incluidos</label>
       </div>
       <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate-600">
         <label class="flex items-center gap-2"><input type="checkbox" name="convenir" class="accent-indigo-600" ${a && !+a.precio ? 'checked' : ''}> Precio a convenir</label>
@@ -1141,8 +1192,8 @@ async function formularioOferta(id = null) {
         <textarea name="descripcion" rows="5" maxlength="2000" required class="campo resize-y" placeholder="Estado, características, horarios, qué incluye el servicio…">${esc(a?.descripcion || '')}</textarea>
       </div>
       <div>
-        <label class="etiqueta">Fotos <span class="font-normal text-slate-400">(máximo 3 · la primera es la portada)</span></label>
-        <div id="fotos" class="grid grid-cols-3 gap-2"></div>
+        <label class="etiqueta">Fotos <span class="font-normal text-slate-400">(opcional · hasta ${MAX_FOTOS} · la primera es la portada · se convierten a WebP para cargar rápido)</span></label>
+        <div id="fotos" class="grid grid-cols-4 gap-2"></div>
         <input type="file" accept="image/*" multiple class="hidden" id="inFotos">
       </div>
       ${a ? '<p class="text-xs text-slate-500 bg-slate-50 rounded-xl p-3">ℹ️ Si cambias el contenido, la publicación volverá a revisión antes de mostrarse.</p>' : estadoUbicacionHtml()}
@@ -1156,9 +1207,12 @@ async function formularioOferta(id = null) {
     const tipo = f.querySelector('[name="tipo"]:checked').value;
     const actual = f.categoria.value || a?.categoria || '';
     f.categoria.innerHTML = '<option value="">Elige…</option>' + categoriasPara(tipo).map((c) => `<option value="${esc(c.nombre)}" ${c.nombre === actual ? 'selected' : ''}>${c.icono} ${esc(c.nombre)}</option>`).join('');
+    $$('[data-solo-inmueble]', f).forEach((el) => el.classList.toggle('hidden', tipo !== 'inmueble'));
+    const arriendo = tipo === 'inmueble' && f.querySelector('[name="operacion"]:checked')?.value === 'arriendo';
+    $('[data-etq-precio]', f).textContent = arriendo ? 'Canon mensual (COP)' : 'Precio (COP)';
   };
   llenarCats();
-  $$('[name="tipo"]', f).forEach((r) => (r.onchange = llenarCats));
+  $$('[name="tipo"], [name="operacion"]', f).forEach((r) => (r.onchange = llenarCats));
   f.convenir.onchange = () => { f.precio.disabled = f.convenir.checked; if (f.convenir.checked) f.precio.value = ''; };
   f.precio.disabled = f.convenir.checked;
   $('[data-ia]', f).onclick = (e) => mejorarConIA(f, 'oferta', e.currentTarget);
@@ -1169,13 +1223,13 @@ async function formularioOferta(id = null) {
     $('#fotos', m.el).innerHTML = [
       ...imgsActuales.map((u, i) => `<div class="relative aspect-square"><img src="${esc(u)}" class="w-full h-full object-cover rounded-xl"><button type="button" data-quitar-act="${i}" class="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs">✕</button></div>`),
       ...nuevas.map((n, i) => `<div class="relative aspect-square"><img src="${n.url}" class="w-full h-full object-cover rounded-xl"><button type="button" data-quitar-nueva="${i}" class="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs">✕</button></div>`),
-      total < 3 ? `<label for="inFotos" class="aspect-square rounded-xl border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 grid place-items-center text-center cursor-pointer text-slate-400 text-xs"><span><span class="text-2xl block">📷</span>Agregar</span></label>` : '',
+      total < MAX_FOTOS ? `<label for="inFotos" class="aspect-square rounded-xl border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 grid place-items-center text-center cursor-pointer text-slate-400 text-xs"><span><span class="text-2xl block">📷</span>Agregar</span></label>` : '',
     ].join('');
     $$('[data-quitar-act]', m.el).forEach((b) => (b.onclick = () => { imgsActuales.splice(+b.dataset.quitarAct, 1); renderFotos(); }));
     $$('[data-quitar-nueva]', m.el).forEach((b) => (b.onclick = () => { URL.revokeObjectURL(nuevas[+b.dataset.quitarNueva].url); nuevas.splice(+b.dataset.quitarNueva, 1); renderFotos(); }));
   };
   inFotos.onchange = () => {
-    const libres = 3 - imgsActuales.length - nuevas.length;
+    const libres = MAX_FOTOS - imgsActuales.length - nuevas.length;
     const files = [...inFotos.files].filter((fl) => fl.type.startsWith('image/'));
     if (files.length > libres) toast(`Solo puedes agregar ${libres} foto(s) más`, 'aviso');
     files.slice(0, libres).forEach((file) => nuevas.push({ file, url: URL.createObjectURL(file) }));
@@ -1202,10 +1256,19 @@ async function formularioOferta(id = null) {
       }
       btn.textContent = nuevas.length ? 'Subiendo fotos…' : 'Guardando…';
       const urls = [...imgsActuales];
-      for (const n of nuevas) urls.push(await subirImagen(db, S.user.id, n.file, 'anuncio'));
+      for (let i = 0; i < nuevas.length; i++) {
+        btn.textContent = `Optimizando y subiendo foto ${i + 1} de ${nuevas.length}…`;
+        urls.push(await subirImagen(db, S.user.id, nuevas[i].file, 'anuncio'));
+      }
+      const tipoSel = f.querySelector('[name="tipo"]:checked').value;
       const datos = {
         titulo: f.titulo.value.trim(),
-        tipo: f.querySelector('[name="tipo"]:checked').value,
+        tipo: tipoSel,
+        operacion: tipoSel === 'inmueble' ? f.querySelector('[name="operacion"]:checked').value : null,
+        detalles: tipoSel === 'inmueble' ? {
+          habitaciones: parseInt(f.habitaciones.value, 10) || 0, banos: parseInt(f.banos.value, 10) || 0,
+          area_m2: parseInt(f.area_m2.value, 10) || 0, amoblado: f.amoblado.checked, servicios_incluidos: f.servicios_incluidos.checked,
+        } : {},
         categoria: f.categoria.value,
         precio,
         precio_negociable: f.negociable.checked,
@@ -1391,7 +1454,7 @@ async function abrirSolicitud(id) {
         <div class="flex flex-wrap gap-1.5 mb-2">
           ${badge(URGENCIAS[s.urgencia] || URGENCIAS.normal)}
           ${esMia ? badge(ESTADOS_SOLICITUD[s.estado]) : ''}
-          <span class="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">${s.tipo === 'producto' ? '🛍️ Busca producto' : '🧰 Busca servicio'}</span>
+          <span class="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">${{ producto: '🛍️ Busca producto', servicio: '🧰 Busca servicio', inmueble: '🏠 Busca inmueble' }[s.tipo] || ''}</span>
           ${s.categoria ? `<span class="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5">${catIcono(s.categoria)} ${esc(s.categoria)}</span>` : ''}
         </div>
         <h2 class="text-xl sm:text-2xl font-extrabold text-slate-900">${esc(s.titulo)}</h2>
@@ -1456,8 +1519,8 @@ async function formularioSolicitud(id = null) {
   const m = modal({
     titulo: s ? 'Editar solicitud' : '🙋 ¿Qué necesitas?', ancho: 'sm:max-w-xl',
     html: `<form class="space-y-4">
-      <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
-        ${[['servicio', '🧰 Un servicio'], ['producto', '🛍️ Un producto']].map(([v, t]) => `
+      <div class="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl">
+        ${[['servicio', '🧰 Un servicio'], ['producto', '🛍️ Un producto'], ['inmueble', '🏠 Un inmueble']].map(([v, t]) => `
           <label class="cursor-pointer"><input type="radio" name="tipo" value="${v}" class="peer sr-only" ${(s?.tipo || 'servicio') === v ? 'checked' : ''}>
           <span class="block text-center py-2 rounded-lg text-sm font-bold text-slate-500 peer-checked:bg-white peer-checked:text-emerald-700 peer-checked:shadow">${t}</span></label>`).join('')}
       </div>
@@ -1465,6 +1528,11 @@ async function formularioSolicitud(id = null) {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><label class="etiqueta">Categoría</label><select name="categoria" required class="campo"></select></div>
         <div><label class="etiqueta">Presupuesto (COP) <span class="font-normal text-slate-400">opcional</span></label><input name="presupuesto" inputmode="numeric" class="campo font-bold" placeholder="Ej. 100.000" value="${s?.presupuesto ? fmtNum(s.presupuesto) : ''}"></div>
+      </div>
+      <div data-solo-inmueble class="grid grid-cols-2 gap-1 p-1 bg-amber-50 rounded-xl">
+        ${[['venta', '🏷️ Quiero comprar'], ['arriendo', '🔑 Quiero arrendar']].map(([v, t]) => `
+          <label class="cursor-pointer"><input type="radio" name="operacion" value="${v}" class="peer sr-only" ${(s?.operacion || 'arriendo') === v ? 'checked' : ''}>
+          <span class="block text-center py-2 rounded-lg text-sm font-bold text-amber-800/60 peer-checked:bg-white peer-checked:text-amber-900 peer-checked:shadow">${t}</span></label>`).join('')}
       </div>
       <div><label class="etiqueta">¿Para cuándo?</label>
         <div class="grid grid-cols-3 gap-2">
@@ -1489,6 +1557,7 @@ async function formularioSolicitud(id = null) {
     const tipo = f.querySelector('[name="tipo"]:checked').value;
     const actual = f.categoria.value || s?.categoria || '';
     f.categoria.innerHTML = '<option value="">Elige…</option>' + categoriasPara(tipo).map((c) => `<option value="${esc(c.nombre)}" ${c.nombre === actual ? 'selected' : ''}>${c.icono} ${esc(c.nombre)}</option>`).join('');
+    $$('[data-solo-inmueble]', f).forEach((el) => el.classList.toggle('hidden', tipo !== 'inmueble'));
   };
   llenarCats();
   $$('[name="tipo"]', f).forEach((r) => (r.onchange = llenarCats));
@@ -1514,6 +1583,7 @@ async function formularioSolicitud(id = null) {
         titulo: f.titulo.value.trim(),
         categoria: f.categoria.value,
         presupuesto: leerPrecio(f.presupuesto.value),
+        operacion: f.querySelector('[name="tipo"]:checked').value === 'inmueble' ? f.querySelector('[name="operacion"]:checked').value : null,
         urgencia: f.querySelector('[name="urgencia"]:checked').value,
         departamento: f.depto.value,
         municipio: f.mun.value,
@@ -1571,17 +1641,20 @@ async function vistaMisPublicaciones() {
         .map(([t, v]) => `<div class="tarjeta p-4"><p class="text-xs text-slate-500">${t}</p><p class="text-2xl font-extrabold mt-1">${fmtNum(v)}</p></div>`).join('')}
     </div>
     ${lista.length ? lista.map((a) => {
-      const img = parseImagenes(a.imagen_urls)[0];
+      const img = imgsDe(a)[0];
       return `<div class="tarjeta p-3 flex gap-3">
         <img src="${esc(img)}" class="w-24 h-24 sm:w-28 sm:h-28 rounded-xl object-cover shrink-0 cursor-pointer" data-accion="ver-anuncio" data-id="${a.id}">
         <div class="min-w-0 grow flex flex-col">
           <div class="flex flex-wrap items-center gap-1.5">${badge(ESTADOS_ANUNCIO[a.estado])}<span class="text-[11px] text-slate-400">${tiempoRelativo(a.created_at)} · 👁 ${fmtNum(a.vistas)}</span></div>
           <h3 class="font-bold text-slate-800 line-clamp-1 mt-1">${esc(a.titulo)}</h3>
-          <p class="text-sm font-extrabold text-indigo-600">${precioTexto(a.precio, a.precio_negociable)}</p>
+          <p class="text-sm font-extrabold text-indigo-600">${precioDe(a)}</p>
+          ${a.estado === 'aprobado' && a.vence_at ? `<p class="text-xs ${new Date(a.vence_at) - Date.now() < 2 * 864e5 ? 'text-orange-700 font-semibold' : 'text-slate-500'} mt-0.5">⏳ ${textoVence(a.vence_at)}</p>` : ''}
+          ${a.estado === 'vencido' ? '<p class="text-xs text-orange-700 mt-1">Pasaron 2 semanas y dejó de mostrarse. Renuévala gratis con un clic (si la editas, pasará por revisión).</p>' : ''}
           ${a.estado === 'rechazado' && a.motivo_rechazo ? `<p class="text-xs text-rose-700 mt-1">Motivo: ${esc(a.motivo_rechazo)}</p>` : ''}
           ${a.estado === 'pendiente' ? '<p class="text-xs text-amber-700 mt-1">Te avisaremos cuando sea aprobada.</p>' : ''}
           <div class="mt-auto pt-2 flex flex-wrap gap-1.5">
             <button data-accion="editar-oferta" data-id="${a.id}" class="btn btn-suave !py-1.5 !px-3 text-xs">✏️ Editar</button>
+            ${a.estado === 'vencido' || (a.estado === 'aprobado' && a.vence_at && new Date(a.vence_at) - Date.now() < 3 * 864e5) ? `<button data-accion="renovar" data-entidad="anuncio" data-id="${a.id}" class="btn btn-primario !py-1.5 !px-3 text-xs">🔄 Renovar 14 días</button>` : ''}
             ${a.estado === 'aprobado' ? `<button data-accion="estado-oferta" data-id="${a.id}" data-estado="pausado" class="btn btn-suave !py-1.5 !px-3 text-xs">⏸ Pausar</button>
               <button data-accion="estado-oferta" data-id="${a.id}" data-estado="vendido" class="btn btn-suave !py-1.5 !px-3 text-xs">✅ Vendido</button>` : ''}
             ${['pausado', 'vendido'].includes(a.estado) && a.aprobado_at ? `<button data-accion="estado-oferta" data-id="${a.id}" data-estado="aprobado" class="btn btn-suave !py-1.5 !px-3 text-xs">▶️ Reactivar</button>` : ''}
@@ -1605,7 +1678,7 @@ async function eliminarOferta(id) {
   const { data: a } = await db.from('anuncios').select('imagen_urls').eq('id', id).single();
   const { error } = await db.from('anuncios').delete().eq('id', id);
   if (error) return toast(errorMsg(error), 'error');
-  const rutas = parseImagenes(a?.imagen_urls).map((u) => u.split('/imagenes/')[1]).filter((r) => r && r.startsWith(S.user.id + '/'));
+  const rutas = fotosReales(a?.imagen_urls).map((u) => u.split('/imagenes/')[1]).filter((r) => r && r.startsWith(S.user.id + '/'));
   if (rutas.length) db.storage.from('imagenes').remove(rutas);
   toast('Publicación eliminada', 'ok');
   vistaMisPublicaciones();
@@ -1643,6 +1716,7 @@ async function vistaMisSolicitudes() {
           <button data-accion="editar-solicitud" data-id="${s.id}" class="btn btn-suave !py-1.5 !px-3 text-xs">✏️ Editar</button>
           ${['abierta', 'asignada', 'pendiente'].includes(s.estado) ? `<button data-accion="estado-solicitud" data-id="${s.id}" data-estado="cerrada" class="btn btn-suave !py-1.5 !px-3 text-xs">🔒 Cerrar</button>` : ''}
           ${s.estado === 'cerrada' ? `<button data-accion="estado-solicitud" data-id="${s.id}" data-estado="abierta" class="btn btn-suave !py-1.5 !px-3 text-xs">🔓 Reabrir</button>` : ''}
+          ${s.estado === 'vencida' || (s.estado === 'abierta' && s.vence_at && new Date(s.vence_at) - Date.now() < 3 * 864e5) ? `<button data-accion="renovar" data-entidad="solicitud" data-id="${s.id}" class="btn btn-verde !py-1.5 !px-3 text-xs">🔄 Renovar 14 días</button>` : ''}
           <button data-accion="eliminar-solicitud" data-id="${s.id}" class="btn btn-rojo !py-1.5 !px-3 text-xs">🗑</button>
         </div>
       </div>
@@ -1972,8 +2046,9 @@ async function vistaPerfil() {
           <h3 class="font-bold mb-4">Mis datos</h3>
           <form id="fPerfil" class="space-y-3">
             <div class="grid grid-cols-3 gap-3">
-              <div class="col-span-2"><label class="etiqueta">Nombre</label><input name="nombre" maxlength="40" required class="campo" value="${esc(S.perfil.nombre || '')}"></div>
-              <div><label class="etiqueta">Edad</label><input name="edad" type="number" min="14" max="110" class="campo" value="${S.perfil.edad || ''}"></div>
+              <div class="col-span-2"><label class="etiqueta">Nombre 🔒</label><input name="nombre" maxlength="40" class="campo" value="${esc(S.perfil.nombre || '')}" ${S.perfil.nombre ? 'disabled' : ''}></div>
+              <div><label class="etiqueta">Edad 🔒</label><input name="edad" type="number" min="14" max="110" class="campo" value="${S.perfil.edad || ''}" ${S.perfil.edad ? 'disabled' : ''}></div>
+              <p class="col-span-3 -mt-1 text-[11px] text-slate-400">Tu nombre, edad y número no se pueden cambiar. Si hay un error, <a href="#soporte" class="underline">escríbenos a Soporte</a>.</p>
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div><label class="etiqueta">Departamento</label><select name="depto" class="campo"></select></div>
@@ -2020,7 +2095,9 @@ async function vistaPerfil() {
   llenarSelectDepartamentos(f.depto, f.mun, { depto: S.perfil.departamento || '', mun: S.perfil.municipio || '' });
   f.onsubmit = async (e) => {
     e.preventDefault();
-    const cambios = { nombre: f.nombre.value.trim(), edad: parseInt(f.edad.value, 10) || null, departamento: f.depto.value || null, municipio: f.mun.value || null, bio: f.bio.value.trim() || null };
+    const cambios = { departamento: f.depto.value || null, municipio: f.mun.value || null, bio: f.bio.value.trim() || null };
+    if (!S.perfil.nombre && f.nombre.value.trim()) cambios.nombre = f.nombre.value.trim();
+    if (!S.perfil.edad && f.edad.value) cambios.edad = parseInt(f.edad.value, 10) || null;
     const { error } = await db.from('perfiles').update(cambios).eq('id', S.user.id);
     if (error) return toast(errorMsg(error), 'error');
     Object.assign(S.perfil, cambios);
@@ -2207,7 +2284,7 @@ async function vistaSoporte() {
       box.textContent = '⏳ Pensando…';
       try {
         const r = await llamarFuncion(db, 'ia', { accion: 'asistente_soporte', pregunta });
-        box.innerHTML = `${esc(r.respuesta)}<div class="mt-3 pt-3 border-t border-white/10 text-xs text-slate-300">¿No resolvió tu duda? <button data-accion="nuevo-ticket" data-texto="${esc(pregunta)}" class="underline font-bold text-white">Crear un ticket</button></div>`;
+        box.innerHTML = `${esc(r.respuesta)}<div class="mt-3 pt-3 border-t border-white/10 text-xs text-slate-300">¿No resolvió tu duda? <button data-accion="nuevo-ticket" data-texto="${esc(pregunta)}" class="underline font-bold text-white">Crear un ticket</button> · Te quedan ${r.restantes} consultas de IA hoy</div>`;
       } catch (ex) { box.textContent = errorMsg(ex); }
     };
     cargarMisTickets();
@@ -2260,7 +2337,8 @@ function formularioTicket(textoInicial = '', referencia = '') {
     btn.disabled = false;
     if (error) return toast(errorMsg(error), 'error');
     m.cerrar();
-    toast(`Ticket #${data.numero} creado. Te responderemos pronto.`, 'ok');
+    toast(`Ticket #${data.numero} creado`, 'ok');
+    S.ticketIAPendiente = data.id;
     location.hash = `#ticket=${data.id}`;
   };
 }
@@ -2296,6 +2374,8 @@ async function vistaTicket(id) {
     </div>`;
   const hilo = $('#hiloTicket');
   hilo.scrollTop = hilo.scrollHeight;
+  const atendidoPorEquipo = (msjs || []).some((m) => m.es_admin && !m.es_ia);
+  if (S.ticketIAPendiente === t.id) { S.ticketIAPendiente = null; asistenteEnTicket(t.id); }
   const f = $('#fTicket');
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -2305,13 +2385,32 @@ async function vistaTicket(id) {
     if (error) return toast(errorMsg(error), 'error');
     f.reset();
     agregarMensajeTicket(data);
+    if (!atendidoPorEquipo) asistenteEnTicket(t.id);
   };
+}
+
+// El asistente (Gemini) responde de inmediato lo que puede; lo demás lo atiende el equipo.
+async function asistenteEnTicket(ticketId) {
+  const hilo = $('#hiloTicket');
+  if (!hilo) return;
+  hilo.insertAdjacentHTML('beforeend', '<div data-escribiendo class="flex justify-start"><div class="burbuja-otro px-4 py-2.5 text-sm text-slate-500 shadow-sm">🤖 El asistente está revisando tu caso…</div></div>');
+  hilo.scrollTop = hilo.scrollHeight;
+  try {
+    const r = await llamarFuncion(db, 'ia', { accion: 'responder_ticket', ticket_id: ticketId });
+    $('[data-escribiendo]')?.remove();
+    if (r.respondido && r.mensaje) agregarMensajeTicket(r.mensaje);
+    else if (r.motivo === 'requiere_humano') hilo.insertAdjacentHTML('beforeend', '<p class="text-center text-xs text-slate-500 py-1">Tu caso necesita revisión de una persona del equipo. Te responderemos aquí pronto 🔔</p>');
+    else if (r.motivo === 'limite') hilo.insertAdjacentHTML('beforeend', '<p class="text-center text-xs text-slate-500 py-1">Usaste tus consultas de IA de hoy; una persona del equipo te responderá pronto.</p>');
+    hilo.scrollTop = hilo.scrollHeight;
+  } catch {
+    $('[data-escribiendo]')?.remove();
+  }
 }
 
 function burbujaTicket(m) {
   return `<div class="flex ${m.es_admin ? 'justify-start' : 'justify-end'}" ${m.id ? `data-tmsj="${m.id}"` : ''}>
     <div class="max-w-[85%]">
-      <p class="text-[10px] font-bold mb-1 ${m.es_admin ? 'text-indigo-600' : 'text-slate-400 text-right'}">${m.es_admin ? '🛟 Equipo OFERTAL' : 'Tú'} · ${tiempoRelativo(m.created_at)}</p>
+      <p class="text-[10px] font-bold mb-1 ${m.es_admin ? 'text-indigo-600' : 'text-slate-400 text-right'}">${m.es_ia ? '🤖 Asistente OFERTAL' : m.es_admin ? '🛟 Equipo OFERTAL' : 'Tú'} · ${tiempoRelativo(m.created_at)}</p>
       <div class="px-4 py-2.5 text-sm shadow-sm whitespace-pre-wrap break-words ${m.es_admin ? 'burbuja-otro' : 'burbuja-yo'}">${esc(m.texto)}</div>
     </div></div>`;
 }
@@ -2352,6 +2451,261 @@ function vistaComoFunciona() {
         <div><p class="text-2xl mb-1">🛡️</p><b class="text-slate-800">Solo el equipo la ve</b><p>La ubicación exacta queda guardada de forma privada para seguridad y respaldo.</p></div>
       </div></section>
     <div class="text-center mt-8"><button data-accion="publicar" class="btn btn-primario px-8 py-3">Empezar ahora</button></div>`;
+}
+
+// ======================================================================
+// MAPA: buscar en el mapa qué se ofrece cerca y contactar
+// ======================================================================
+const MAPA = { mapa: null, capa: null, items: [], zona: null, yo: null, filtro: { tipo: 'todos', categoria: '', solicitudes: false } };
+
+async function vistaMapa() {
+  const f = MAPA.filtro;
+  app.innerHTML = `
+    ${encabezadoExplorar('mapa').replace(/<section[\s\S]*?<\/section>/, '')}
+    <div class="mt-4 flex flex-wrap gap-2 items-center">
+      <div class="inline-flex bg-white border border-slate-200 rounded-xl p-0.5">
+        ${[['todos', 'Todo'], ['producto', 'Productos'], ['servicio', 'Servicios'], ['inmueble', 'Inmuebles']].map(([v, t]) => `<button data-mapa-tipo="${v}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold ${f.tipo === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}">${t}</button>`).join('')}
+      </div>
+      <select id="mapaCat" class="campo !w-auto !py-2 text-xs sm:text-sm"><option value="">Todas las categorías</option>
+        ${S.categorias.map((c) => `<option value="${esc(c.nombre)}" ${f.categoria === c.nombre ? 'selected' : ''}>${c.icono} ${esc(c.nombre)}</option>`).join('')}</select>
+      <input id="mapaBuscar" type="search" class="campo !w-44 sm:!w-56 !py-2 text-sm" placeholder="Buscar en el mapa…" value="${esc(S.filtros.q)}">
+      <label class="chip flex items-center gap-2 cursor-pointer ${f.solicitudes ? 'activo' : ''}"><input type="checkbox" id="mapaSol" class="hidden" ${f.solicitudes ? 'checked' : ''}>🙋 Ver solicitudes</label>
+      <button id="mapaCerca" class="btn btn-primario !py-2 text-xs sm:text-sm ml-auto">📍 Cerca de mí</button>
+    </div>
+    <div class="mt-3 grid lg:grid-cols-[1fr_360px] gap-4">
+      <div id="mapaOfertas" class="mapa !h-[58vh] lg:!h-[calc(100vh-260px)] min-h-[380px]"></div>
+      <aside class="tarjeta overflow-hidden flex flex-col lg:h-[calc(100vh-260px)] min-h-[300px]">
+        <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <p id="mapaConteo" class="text-sm font-bold">Cargando…</p>
+          <p class="text-[10px] text-slate-400">Áreas aproximadas 🔒</p>
+        </div>
+        <div id="mapaLista" class="overflow-y-auto grow divide-y divide-slate-50"></div>
+      </aside>
+    </div>`;
+  const el = $('#mapaOfertas');
+  if (!window.L) { el.innerHTML = '<p class="p-6 text-sm text-slate-500">No se pudo cargar el mapa.</p>'; return; }
+  const centro = S.miUbic ? [S.miUbic.lat, S.miUbic.lng] : S.perfil?.zona_lat != null ? [S.perfil.zona_lat, S.perfil.zona_lng] : [7.12, -73.12];
+  MAPA.mapa = L.map(el, { scrollWheelZoom: true, maxZoom: 17 }).setView(centro, S.miUbic || S.perfil?.zona_lat != null ? 12 : 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 17 }).addTo(MAPA.mapa);
+  MAPA.mapa.on('moveend', renderListaMapa);
+  MAPA.mapa.on('popupopen', (ev) => {
+    const it = ev.popup._ofertal;
+    if (MAPA.zona) MAPA.zona.remove();
+    if (it) MAPA.zona = L.circle([it.zona_lat, it.zona_lng], { radius: it.zona_radio || 1000, color: it._sol ? '#059669' : '#4f46e5', weight: 1.5, fillOpacity: 0.1, interactive: false }).addTo(MAPA.mapa);
+  });
+  MAPA.mapa.on('popupclose', () => { if (MAPA.zona) { MAPA.zona.remove(); MAPA.zona = null; } });
+  if (S.miUbic) ponerYo();
+
+  $$('[data-mapa-tipo]').forEach((b) => (b.onclick = () => { f.tipo = b.dataset.mapaTipo; $$('[data-mapa-tipo]').forEach((x) => { const on = x === b; x.classList.toggle('bg-slate-800', on); x.classList.toggle('text-white', on); x.classList.toggle('text-slate-600', !on); }); pintarMapa(); }));
+  $('#mapaCat').onchange = (e) => { f.categoria = e.target.value; pintarMapa(); };
+  $('#mapaBuscar').oninput = debounce((e) => { S.filtros.q = e.target.value.trim(); pintarMapa(); }, 300);
+  $('#mapaSol').onchange = (e) => { f.solicitudes = e.target.checked; e.target.parentElement.classList.toggle('activo', f.solicitudes); cargarDatosMapa(); };
+  $('#mapaCerca').onclick = async () => {
+    if (!(await ubicacionLocalParaFiltro())) return;
+    ponerYo();
+    MAPA.mapa.setView([S.miUbic.lat, S.miUbic.lng], 13);
+  };
+  await cargarDatosMapa();
+}
+
+function ponerYo() {
+  if (!MAPA.mapa || !S.miUbic) return;
+  if (MAPA.yo) MAPA.yo.remove();
+  MAPA.yo = L.circleMarker([S.miUbic.lat, S.miUbic.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 })
+    .bindTooltip('Tú (solo lo ves tú)').addTo(MAPA.mapa);
+}
+
+async function cargarDatosMapa() {
+  const cols = S.user ? COLS_ANUNCIO_SESION : COLS_ANUNCIO_PUBLICO;
+  let qa = db.from('anuncios').select(cols).eq('estado', 'aprobado').not('zona_lat', 'is', null).order('created_at', { ascending: false }).limit(1000);
+  const peticiones = [qa];
+  if (MAPA.filtro.solicitudes) peticiones.push(db.from('solicitudes').select('*').eq('estado', 'abierta').not('zona_lat', 'is', null).limit(500));
+  const [ra, rs] = await Promise.all(peticiones);
+  if (!$('#mapaOfertas')) return;
+  MAPA.items = [...(ra.data || []), ...((rs?.data) || []).map((x) => ({ ...x, _sol: true }))];
+  await cargarPerfiles(MAPA.items.map((x) => x.user_id));
+  pintarMapa();
+}
+
+function itemsFiltradosMapa() {
+  const f = MAPA.filtro;
+  const q = (S.filtros.q || '').toLowerCase();
+  return MAPA.items.filter((x) => (f.tipo === 'todos' || x.tipo === f.tipo) && (!f.categoria || x.categoria === f.categoria)
+    && (!q || [x.titulo, x.descripcion, x.categoria, x.municipio].some((v) => (v || '').toLowerCase().includes(q))));
+}
+
+function iconoMapa(x) {
+  const ico = x._sol ? '🙋' : catIcono(x.categoria) || TIPOS[x.tipo]?.icono || '📦';
+  const borde = x._sol ? '#059669' : x.tipo === 'inmueble' ? '#d97706' : x.tipo === 'servicio' ? '#10b981' : '#4f46e5';
+  return L.divIcon({ className: '', iconSize: [36, 36], iconAnchor: [18, 18], popupAnchor: [0, -16],
+    html: `<div style="width:36px;height:36px;border-radius:999px;background:#fff;border:3px solid ${borde};display:grid;place-items:center;font-size:18px;box-shadow:0 2px 6px rgb(0 0 0 / .25)">${ico}</div>` });
+}
+
+function popupMapa(x) {
+  const v = S.perfiles.get(x.user_id) || {};
+  if (x._sol) {
+    return `<div style="min-width:200px" class="space-y-1.5">
+      <p class="text-[10px] font-bold text-emerald-700 uppercase">🙋 Alguien necesita</p>
+      <p class="font-bold text-sm leading-snug">${esc(x.titulo)}</p>
+      <p class="text-xs text-slate-500">${x.presupuesto ? 'Presupuesto ' + fmtCOP(x.presupuesto) : 'A convenir'} · 📍 ${esc(x.municipio || '')}</p>
+      <div class="flex gap-1.5 pt-1"><a href="#solicitud=${x.id}" class="btn btn-verde !py-1.5 !px-3 text-xs !text-white">Ver y proponer</a></div></div>`;
+  }
+  const img = imgsDe(x)[0];
+  const d = distanciaA(x);
+  const wa = S.user && x.contacto ? `https://wa.me/57${x.contacto}?text=${encodeURIComponent(`Hola ${v.nombre || ''}, vi en OFERTAL: "${x.titulo}". ${location.origin}${location.pathname}#anuncio=${x.id}`)}` : null;
+  return `<div style="width:220px" class="space-y-1.5">
+    <img src="${esc(img)}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px">
+    <p class="text-[10px] font-bold uppercase ${(TIPOS[x.tipo] || TIPOS.producto).clase.split(' ')[0]}">${esc(etiquetaTipo(x))}${x.categoria ? ' · ' + esc(x.categoria) : ''}</p>
+    <p class="font-bold text-sm leading-snug">${esc(x.titulo)}</p>
+    <p class="text-sm font-extrabold text-indigo-600">${precioDe(x)}</p>
+    <p class="text-[11px] text-slate-500">👤 ${esc(v.nombre || 'Vendedor')} · 📍 ${esc(x.municipio || '')}${d != null ? ' · ' + textoDistancia(d) : ''}</p>
+    <div class="flex flex-wrap gap-1.5 pt-1">
+      <a href="#anuncio=${x.id}" class="btn btn-suave !py-1.5 !px-3 text-xs">Ver</a>
+      ${S.user ? `${S.user.id !== x.user_id ? `<button data-accion="chatear" data-usuario="${x.user_id}" data-anuncio="${x.id}" class="btn btn-primario !py-1.5 !px-3 text-xs">💬 Chatear</button>` : ''}
+        ${wa && S.user.id !== x.user_id ? `<a href="${wa}" target="_blank" rel="noopener" class="btn btn-verde !py-1.5 !px-3 text-xs !text-white">WhatsApp</a>` : ''}`
+      : '<button data-accion="login" class="btn btn-primario !py-1.5 !px-3 text-xs">Ingresa para contactar</button>'}
+    </div></div>`;
+}
+
+function pintarMapa() {
+  if (!MAPA.mapa) return;
+  if (MAPA.capa) MAPA.capa.remove();
+  const lista = itemsFiltradosMapa();
+  MAPA.capa = window.L.markerClusterGroup ? L.markerClusterGroup({ showCoverageOnHover: false, maxClusterRadius: 45, spiderfyOnMaxZoom: true }) : L.featureGroup();
+  lista.forEach((x) => {
+    const mk = L.marker([x.zona_lat, x.zona_lng], { icon: iconoMapa(x), title: x.titulo });
+    const pop = L.popup({ maxWidth: 260 }).setContent(popupMapa(x));
+    pop._ofertal = x;
+    mk.bindPopup(pop);
+    x._marker = mk;
+    MAPA.capa.addLayer(mk);
+  });
+  MAPA.capa.addTo(MAPA.mapa);
+  if (!S.miUbic && S.perfil?.zona_lat == null && lista.length && !MAPA.ajustado) {
+    MAPA.ajustado = true;
+    MAPA.mapa.fitBounds(L.latLngBounds(lista.map((x) => [x.zona_lat, x.zona_lng])), { padding: [40, 40], maxZoom: 13 });
+  }
+  renderListaMapa();
+}
+
+function renderListaMapa() {
+  const cont = $('#mapaLista');
+  if (!cont || !MAPA.mapa) return;
+  const b = MAPA.mapa.getBounds();
+  const c = MAPA.mapa.getCenter();
+  const visibles = itemsFiltradosMapa().filter((x) => b.contains([x.zona_lat, x.zona_lng]))
+    .map((x) => ({ x, d: distanciaKm(c.lat, c.lng, x.zona_lat, x.zona_lng) })).sort((a, z) => a.d - z.d).slice(0, 80);
+  $('#mapaConteo').textContent = `${visibles.length} en esta zona del mapa`;
+  cont.innerHTML = visibles.length ? visibles.map(({ x }) => `
+    <button data-mapa-ir="${x.id}" class="w-full text-left flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50">
+      ${x._sol ? '<span class="w-12 h-12 rounded-lg bg-emerald-50 grid place-items-center text-xl shrink-0">🙋</span>' : `<img src="${esc(imgsDe(x)[0])}" alt="" class="w-12 h-12 rounded-lg object-cover shrink-0 bg-slate-100">`}
+      <span class="min-w-0 grow"><span class="block text-sm font-semibold truncate">${esc(x.titulo)}</span>
+      <span class="block text-xs text-slate-500 truncate">${x._sol ? (x.presupuesto ? fmtCOP(x.presupuesto) : 'A convenir') : precioDe(x)} · 📍 ${esc(x.municipio || '')}${distanciaA(x) != null ? ' · ' + textoDistancia(distanciaA(x)) : ''}</span></span>
+    </button>`).join('') : '<p class="p-6 text-center text-sm text-slate-500">No hay publicaciones en esta parte del mapa. Aleja el mapa o cambia los filtros.</p>';
+  $$('[data-mapa-ir]', cont).forEach((btn) => (btn.onclick = () => {
+    const x = MAPA.items.find((i) => i.id === btn.dataset.mapaIr);
+    if (!x?._marker) return;
+    if (MAPA.capa.zoomToShowLayer) MAPA.capa.zoomToShowLayer(x._marker, () => x._marker.openPopup());
+    else { MAPA.mapa.setView([x.zona_lat, x.zona_lng], 14); x._marker.openPopup(); }
+  }));
+}
+
+// ======================================================================
+// ACTIVAR CUENTA (personas cuyas publicaciones se tomaron de grupos de WhatsApp)
+// ======================================================================
+async function vistaActivar(token) {
+  if (S.activando) return;
+  app.innerHTML = '<div class="py-24 text-center text-slate-400">Cargando tu cuenta…</div>';
+  let info;
+  try {
+    info = await llamarFuncion(db, 'activar', { accion: 'info', token });
+  } catch (e) {
+    const usado = /activada/i.test(e.message);
+    app.innerHTML = `<div class="max-w-md mx-auto mt-10 tarjeta p-8 text-center space-y-3">
+      <div class="text-5xl">${usado ? '✅' : '⚠️'}</div>
+      <h1 class="text-xl font-extrabold">${usado ? 'Tu cuenta ya está activa' : 'No pudimos abrir este enlace'}</h1>
+      <p class="text-sm text-slate-600">${esc(e.message)}</p>
+      ${usado ? '<button data-accion="login" class="btn btn-primario w-full">Ingresar con mi número y PIN</button>' : '<a href="#soporte" class="btn btn-oscuro w-full">Ir a Soporte</a>'}
+    </div>`;
+    return;
+  }
+  if (S.user) {
+    app.innerHTML = `<div class="max-w-md mx-auto mt-10 tarjeta p-8 text-center space-y-3"><div class="text-5xl">👤</div>
+      <h1 class="text-xl font-extrabold">Tienes otra sesión abierta</h1>
+      <p class="text-sm text-slate-600">Para activar la cuenta del número ${esc(info.telefono)} primero cierra la sesión actual.</p>
+      <button data-accion="logout" class="btn btn-oscuro w-full">Cerrar sesión</button></div>`;
+    return;
+  }
+  app.innerHTML = `
+    <div class="max-w-2xl mx-auto mt-6 space-y-5">
+      <section class="rounded-3xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-6 sm:p-8">
+        <p class="text-emerald-100 text-sm font-semibold">¡Bienvenido a OFERTAL!</p>
+        <h1 class="text-2xl sm:text-3xl font-extrabold mt-1">Tu publicación ya está en línea 🎉</h1>
+        <p class="text-emerald-50 text-sm mt-2">La tomamos del grupo de WhatsApp y la publicamos gratis para que más personas de la región la vean. Termina tu registro para administrarla, responder a los interesados y publicar más.</p>
+      </section>
+      ${info.publicaciones?.length ? `<section class="tarjeta p-4"><h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Tus publicaciones</h2>
+        <div class="space-y-2">${info.publicaciones.map((a) => `<a href="#anuncio=${a.id}" class="flex items-center gap-3 p-2 rounded-xl hover:bg-slate-50">
+          <img src="${esc(a.imagen || imgsDe({ imagen_urls: [] })[0])}" alt="" class="w-14 h-14 rounded-lg object-cover bg-slate-100">
+          <span class="min-w-0"><span class="block font-semibold text-sm truncate">${esc(a.titulo)}</span><span class="block text-xs text-slate-500">${precioTexto(a.precio)}</span></span></a>`).join('')}</div></section>` : ''}
+      <section class="tarjeta p-5 sm:p-6">
+        <h2 class="font-extrabold text-lg">Completa tu registro</h2>
+        <p class="text-sm text-slate-500 mb-4">Número: <b>${esc(info.telefono)}</b></p>
+        <form id="fActivar" class="space-y-3">
+          <div class="grid grid-cols-3 gap-3">
+            <div class="col-span-2"><label class="etiqueta">Tu nombre</label><input name="nombre" required maxlength="40" class="campo"></div>
+            <div><label class="etiqueta">Edad</label><input name="edad" type="number" min="14" max="110" class="campo"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="etiqueta">Departamento</label><select name="depto" class="campo"></select></div>
+            <div><label class="etiqueta">Municipio</label><select name="mun" class="campo"></select></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="etiqueta">Crea tu PIN (4 números)</label><input name="pin" type="password" inputmode="numeric" maxlength="4" required class="campo text-center tracking-[0.5em] font-bold"></div>
+            <div><label class="etiqueta">Repite tu PIN</label><input name="pin2" type="password" inputmode="numeric" maxlength="4" required class="campo text-center tracking-[0.5em] font-bold"></div>
+          </div>
+          <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-3"><input type="checkbox" name="terminos" class="mt-0.5 accent-indigo-600">
+            <span>He leído y acepto los <button type="button" data-accion="ver-terminos" class="text-indigo-600 font-bold underline">Términos y condiciones</button>. Entiendo que ni OFERTAL ni ${esc(RESPONSABLE)} se hacen responsables por robos, estafas, acuerdos entre usuarios ni por los servicios prestados.</span></label>
+          <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-3"><input type="checkbox" name="ubicacion" class="mt-0.5 accent-indigo-600">
+            <span>Acepto que OFERTAL registre mi ubicación por seguridad. Los demás solo verán un área aproximada, nunca mi ubicación exacta.</span></label>
+          <p id="actError" class="hidden text-sm text-rose-600 bg-rose-50 rounded-xl px-3 py-2"></p>
+          <button data-enviar class="btn btn-verde w-full py-3 text-base">Activar mi cuenta</button>
+        </form>
+      </section>
+    </div>`;
+  const f = $('#fActivar');
+  llenarSelectDepartamentos(f.depto, f.mun, { depto: info.departamento || '', mun: info.municipio || '' });
+  f.pin.oninput = () => (f.pin.value = f.pin.value.replace(/\D/g, ''));
+  f.pin2.oninput = () => (f.pin2.value = f.pin2.value.replace(/\D/g, ''));
+  const err = $('#actError');
+  const fallo = (t) => { err.textContent = t; err.classList.remove('hidden'); };
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    err.classList.add('hidden');
+    if (f.nombre.value.trim().length < 2) return fallo('Escribe tu nombre.');
+    if (!f.depto.value || !f.mun.value) return fallo('Selecciona tu departamento y municipio.');
+    if (!/^\d{4}$/.test(f.pin.value)) return fallo('El PIN debe tener 4 números.');
+    if (f.pin.value !== f.pin2.value) return fallo('Los PIN no coinciden.');
+    if (/^(\d)\1{3}$/.test(f.pin.value) || ['1234', '4321', '0000'].includes(f.pin.value)) return fallo('Elige un PIN menos obvio.');
+    if (!f.terminos.checked) return fallo('Debes aceptar los términos y condiciones.');
+    if (!f.ubicacion.checked) return fallo('Debes aceptar el uso de la ubicación.');
+    const btn = f.querySelector('[data-enviar]');
+    btn.disabled = true; btn.textContent = 'Activando…';
+    S.activando = true;
+    try {
+      const r = await llamarFuncion(db, 'activar', { accion: 'completar', token, pin: f.pin.value, nombre: f.nombre.value.trim(), edad: f.edad.value, departamento: f.depto.value, municipio: f.mun.value, terminos_version: TERMINOS_VERSION });
+      const { error } = await db.auth.signInWithPassword({ email: r.email, password: f.pin.value + PIN_SALT });
+      if (error) throw error;
+      history.replaceState(null, '', '#mis-publicaciones');
+      S.activando = false;
+      toast('¡Cuenta activada! 🎉 Recuerda tu PIN para ingresar', 'ok', 6000);
+      await router();
+      asegurarUbicacion('activacion').then((ok) => ok && toast('Ubicación activada 📍', 'ok'));
+    } catch (ex) {
+      S.activando = false;
+      fallo(errorMsg(ex));
+      btn.disabled = false; btn.textContent = 'Activar mi cuenta';
+    }
+  };
 }
 
 // ======================================================================
@@ -2397,6 +2751,12 @@ const ACCIONES = {
   'activar-ubicacion': () => (S.permisoUbic === 'denied' ? ayudaUbicacion(true) : asegurarUbicacion('manual').then((ok) => ok && toast('Ubicación activada 📍', 'ok'))),
   'actualizar-ubicacion': async () => { if (await asegurarUbicacion('manual')) { toast('Ubicación actualizada', 'ok'); vistaPerfil(); } },
   'nuevo-ticket': (d) => formularioTicket(d.texto || ''),
+  renovar: async (d) => {
+    const { error } = await db.rpc('renovar_publicacion', { p_entidad: d.entidad, p_id: d.id });
+    if (error) return toast(errorMsg(error), 'error');
+    toast('¡Renovada! Se mostrará 14 días más 🔄', 'ok');
+    if (d.entidad === 'anuncio') vistaMisPublicaciones(); else vistaMisSolicitudes();
+  },
   'aceptar-terminos': () => modalTerminosPendientes(),
   'ver-terminos': () => abrirTerminosModal(),
   'limpiar-busqueda': () => limpiarBusqueda(),

@@ -2,26 +2,40 @@
 
 Sitio: https://abulingo.github.io/ofertal/ · Panel: https://abulingo.github.io/ofertal/admin.html
 
-Marketplace colombiano donde las personas **ofrecen** productos y servicios y también **solicitan** lo que necesitan
-para recibir propuestas de proveedores cercanos. Sitio estático (GitHub Pages) + Supabase (base de datos, autenticación,
+Marketplace **regional** de todo: productos, servicios e inmuebles (venta de casas, arriendo de apartamentos y
+habitaciones, locales, lotes). Las personas **ofrecen**, **solicitan** lo que necesitan y **encuentran en el mapa** lo
+que se ofrece cerca de su ubicación. Sitio estático (GitHub Pages) + Supabase (base de datos, autenticación,
 almacenamiento, tiempo real y Edge Functions) + Vertex AI (Gemini).
 
 ## Funciones
 
 **Usuarios** (`index.html`)
 - Registro e ingreso con WhatsApp colombiano + PIN de 4 dígitos (compatible con las cuentas existentes).
-- Ofertas con hasta 3 fotos (comprimidas en el navegador), categorías, precio negociable o a convenir, edición, pausa, vendido.
+- Ofertas de productos, servicios e **inmuebles** (venta o arriendo, con habitaciones, baños, área, amoblado).
+- Hasta **8 fotos** o ninguna; se convierten a **WebP** en el navegador antes de subir.
+- **Vigencia de 14 días**: aviso 24 h antes, al vencer deja de mostrarse y se **renueva con un clic** si no se editó
+  (si se edita vuelve a revisión). Tarea programada `pg_cron` cada 30 minutos.
+- Límites diarios: **10 publicaciones** y **10 consultas de IA** por usuario (configurables en el panel).
+- **Mapa** para buscar qué se ofrece cerca, ver áreas aproximadas y contactar (chat o WhatsApp).
+- Modo regional: con la ubicación activa lo más cercano aparece primero.
+- Nombre, edad y número **no los puede cambiar el usuario** (solo el administrador).
 - **Solicitudes**: alguien pide un servicio/producto → los proveedores de esa categoría y zona reciben una notificación →
   envían **propuestas** con precio → el solicitante acepta o rechaza.
 - **Chat interno** en tiempo real, con confirmación de lectura, además del botón de WhatsApp al vendedor.
 - Notificaciones en tiempo real (campana + notificaciones del navegador).
 - Favoritos, perfil público con reseñas (1–5 ⭐), verificación de identidad, reportes de publicaciones/usuarios.
 - Filtros por categoría, tipo, departamento, cercanía y precio; búsqueda; enlaces para compartir.
-- **Soporte interno** (reemplaza el WhatsApp): preguntas frecuentes, asistente con IA, tickets con conversación y
-  formulario "¿Olvidaste tu PIN?" para personas sin sesión.
+- **Soporte interno** (reemplaza el WhatsApp): preguntas frecuentes, asistente con IA, tickets donde el asistente
+  (Gemini 2.5 Flash-Lite) **responde automáticamente** lo que puede y el equipo atiende el resto, y formulario
+  "¿Olvidaste tu PIN?" para personas sin sesión.
 - ✨ "Mejorar con IA" redacta títulos y descripciones.
 
 **Administración** (`admin.html`)
+- **📲 Importar de WhatsApp**: pega mensajes de grupos o sube el chat exportado (.zip con fotos). Se detectan números,
+  fotos y mensajes seguidos de la misma persona; la IA arma cada anuncio (tipo, título, precio, categoría, municipio).
+  Al publicar se crea una **cuenta pendiente de activación** y se genera un **mensaje personalizado** con el enlace
+  `#activar=…` para copiarlo o abrirlo directo en WhatsApp. La persona crea su propio PIN, completa sus datos, acepta
+  términos y comparte su ubicación. Pestañas de cuentas importadas (conversión) y plantillas del mensaje.
 - Resumen con indicadores, gráfico de actividad de 30 días y pendientes.
 - Moderación de ofertas y solicitudes (aprobar / rechazar con motivo / pausar / destacar / eliminar, acciones masivas),
   con **análisis de riesgo por IA**.
@@ -56,13 +70,15 @@ assets/css/app.css         Estilos complementarios a Tailwind
 assets/data/colombia.json  Departamentos y municipios
 supabase/migrations/       Esquema SQL completo (tablas, RLS, triggers, funciones)
 supabase/functions/ia      Edge Function con Vertex AI (Gemini)
-supabase/functions/admin   Edge Function para acciones con llave de servicio
+supabase/functions/admin   Edge Function para acciones con llave de servicio (PIN, importar, corregir datos)
+supabase/functions/activar Edge Function pública para activar cuentas importadas de WhatsApp
 ```
 
 ## Configuración de Supabase
 
-- Ejecutar `supabase/migrations/20260926000000_ofertal_v2.sql` en el editor SQL (es idempotente).
-- Desplegar las funciones `ia` y `admin` (con `verify_jwt = false`: validan el token internamente).
+- Ejecutar en orden `supabase/migrations/20260926000000_ofertal_v2.sql` y `20260927000000_ofertal_v3.sql`
+  en el editor SQL (son idempotentes). La v3 activa `pg_cron` para los vencimientos.
+- Desplegar las funciones `ia`, `admin` y `activar` (con `verify_jwt = false`: validan el token internamente).
 - Secretos de las funciones: `GCP_SA_JSON` (JSON de la cuenta de servicio de Google Cloud con acceso a Vertex AI) y,
   opcionalmente, `VERTEX_MODEL` (por defecto `gemini-2.5-flash-lite`, el más económico).
 - Para dar rol de administrador a una cuenta: `update perfiles set rol = 'admin' where whatsapp = '3XXXXXXXXX';`
