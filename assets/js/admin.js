@@ -695,12 +695,13 @@ async function secUsuarios(idAbrir) {
     verificados: (u) => u.verificado,
     suspendidos: (u) => u.estado === 'suspendido',
     admins: (u) => u.rol === 'admin',
+    sin_terminos: (u) => !u.terminos_aceptados_at,
   };
   const txt = f.q.toLowerCase();
   const lista = todos.filter(filtros[f.filtro]).filter((u) => !txt || [u.nombre, u.whatsapp, u.municipio, u.departamento].some((v) => (v || '').toLowerCase().includes(txt)));
   contenido.innerHTML = `
     <div class="flex flex-wrap gap-3 items-center justify-between">
-      ${tabs(Object.keys(filtros).map((k) => [k, { todos: 'Todos', activos24: 'Activos 24 h', sin_ubicacion: 'Sin ubicación', verificados: 'Verificados', suspendidos: 'Suspendidos', admins: 'Administradores' }[k], todos.filter(filtros[k]).length]), f.filtro, 'filtro')}
+      ${tabs(Object.keys(filtros).map((k) => [k, { todos: 'Todos', activos24: 'Activos 24 h', sin_ubicacion: 'Sin ubicación', verificados: 'Verificados', suspendidos: 'Suspendidos', admins: 'Administradores', sin_terminos: 'Sin aceptar términos' }[k], todos.filter(filtros[k]).length]), f.filtro, 'filtro')}
       <input id="fBuscar" type="search" class="campo !py-2 text-sm w-64" placeholder="Nombre, WhatsApp, municipio…" value="${esc(f.q)}">
     </div>
     <div class="tarjeta mt-3 overflow-x-auto">
@@ -751,7 +752,8 @@ async function verUsuario(id) {
         ${u.estado === 'suspendido' && u.motivo_suspension ? `<div class="rounded-xl bg-rose-50 text-rose-800 text-sm p-3">Motivo: ${esc(u.motivo_suspension)}</div>` : ''}
         <div class="grid grid-cols-2 gap-2 text-xs">
           ${[['WhatsApp', u.whatsapp ? `<a class="text-emerald-700 underline" target="_blank" href="${waLink(u.whatsapp)}">${esc(u.whatsapp)}</a>` : '—'], ['Edad', u.edad || '—'], ['Municipio', `${esc(u.municipio || '—')}, ${esc(u.departamento || '')}`], ['Calificación', u.num_resenas ? `★ ${u.calificacion} (${u.num_resenas})` : '—'],
-             ['Registro', fechaHora(u.created_at)], ['Último ingreso', fechaHora(u.ultimo_ingreso)], ['Última conexión', u.ultima_conexion ? tiempoRelativo(u.ultima_conexion) : '—'], ['Ofertas / Solicitudes', `${u.num_anuncios} / ${u.num_solicitudes}`]]
+             ['Registro', fechaHora(u.created_at)], ['Último ingreso', fechaHora(u.ultimo_ingreso)], ['Última conexión', u.ultima_conexion ? tiempoRelativo(u.ultima_conexion) : '—'], ['Ofertas / Solicitudes', `${u.num_anuncios} / ${u.num_solicitudes}`],
+             ['Términos y condiciones', u.terminos_aceptados_at ? `✓ v${esc(u.terminos_version || '')} · ${fechaHora(u.terminos_aceptados_at)}` : '<span class="text-amber-600">Pendiente de aceptar</span>']]
             .map(([k, v]) => `<div class="rounded-lg bg-slate-50 p-2"><span class="text-slate-400 block">${k}</span><b class="text-slate-700">${v}</b></div>`).join('')}
         </div>
         ${u.bio ? `<p class="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">${esc(u.bio)}</p>` : ''}

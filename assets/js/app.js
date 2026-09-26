@@ -6,6 +6,7 @@ import {
   estrellas, avatar, badge, ESTADOS_ANUNCIO, ESTADOS_SOLICITUD, ESTADOS_TICKET, CATEGORIAS_TICKET, URGENCIAS,
   PIN_SALT, COLS_ANUNCIO_PUBLICO,
 } from './common.js';
+import { TERMINOS_VERSION, RESPONSABLE, terminosHtml, resumenTerminosHtml } from './terminos.js';
 
 const db = crearCliente();
 const $ = (s, r = document) => r.querySelector(s);
@@ -91,6 +92,7 @@ async function aplicarSesion(session, evento) {
     contarPendientes();
     db.rpc('registrar_conexion');
     gestionarUbicacionAlIngresar();
+    if (!terminosAceptados()) setTimeout(() => modalTerminosPendientes(), 700);
   } else {
     detenerSeguimiento();
   }
@@ -118,6 +120,7 @@ const VISTAS = {
   soporte: vistaSoporte,
   ticket: vistaTicket,
   'como-funciona': vistaComoFunciona,
+  terminos: vistaTerminos,
 };
 const REQUIERE_SESION = new Set(['mis-publicaciones', 'mis-solicitudes', 'favoritos', 'mensajes', 'chat', 'notificaciones', 'perfil', 'ticket']);
 const RUTAS_MODAL = { anuncio: abrirAnuncio, solicitud: abrirSolicitud };
@@ -228,17 +231,131 @@ document.addEventListener('click', (e) => {
   if (menu && !menu.classList.contains('hidden') && !e.target.closest('[data-accion="menu-usuario"]')) menu.classList.add('hidden');
 });
 
+const inputsBusqueda = () => [$('#buscarDesktop'), $('#buscarMovil')];
+let tokenSugerencias = 0;
+
 function configurarBuscador() {
-  const inputs = [$('#buscarDesktop'), $('#buscarMovil')];
   const aplicar = debounce((v) => {
+    const antes = S.filtros.q;
     S.filtros.q = v.trim();
-    if (S.vista === 'solicitudes') renderListaSolicitudes();
-    else if (S.vista === 'inicio') cargarAnuncios(true);
+    if (!['inicio', 'solicitudes'].includes(S.vista)) return;
+    // Al empezar o terminar una búsqueda se cambia el diseño: los resultados quedan arriba
+    if (!!antes !== !!S.filtros.q) (S.vista === 'solicitudes' ? vistaSolicitudes() : vistaInicio());
+    else if (S.vista === 'solicitudes') renderListaSolicitudes();
+    else cargarAnuncios(true);
   }, 350);
-  inputs.forEach((inp) => inp.addEventListener('input', () => {
-    inputs.forEach((o) => { if (o !== inp) o.value = inp.value; });
-    aplicar(inp.value);
-  }));
+  const sugerir = debounce((inp) => mostrarSugerencias(inp), 220);
+  inputsBusqueda().forEach((inp) => {
+    inp.addEventListener('input', () => {
+      inputsBusqueda().forEach((o) => { if (o !== inp) o.value = inp.value; });
+      aplicar(inp.value);
+      sugerir(inp);
+    });
+    inp.addEventListener('focus', () => { if (inp.value.trim().length >= 2) mostrarSugerencias(inp); });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); irAResultados(inp.value); }
+      else if (e.key === 'Escape') quitarSugerencias();
+      else if (e.key === 'ArrowDown') { const primero = $('[data-sugerencias] a, [data-sugerencias] button'); if (primero) { e.preventDefault(); primero.focus(); } }
+    });
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('[data-buscador]')) quitarSugerencias(); });
+  document.addEventListener('keydown', (e) => {
+    const panel = e.target.closest?.('[data-sugerencias]');
+    if (!panel || !['ArrowDown', 'ArrowUp', 'Escape'].includes(e.key)) return;
+    e.preventDefault();
+    if (e.key === 'Escape') { quitarSugerencias(); return; }
+    const items = $$('a, button', panel);
+    const i = items.indexOf(e.target) + (e.key === 'ArrowDown' ? 1 : -1);
+    if (i < 0) panel.parentElement.querySelector('input')?.focus(); else items[Math.min(i, items.length - 1)].focus();
+  });
+}
+
+function quitarSugerencias() {
+  tokenSugerencias++;
+  $$('[data-sugerencias]').forEach((el) => el.remove());
+}
+
+function resaltar(texto, q) {
+  const t = String(texto ?? '');
+  const i = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (i < 0) return esc(t);
+  return `${esc(t.slice(0, i))}<mark class="bg-amber-100 text-inherit rounded px-0.5">${esc(t.slice(i, i + q.length))}</mark>${esc(t.slice(i + q.length))}`;
+}
+
+async function mostrarSugerencias(inp) {
+  const q = inp.value.trim();
+  const t = q.replace(/[%,()*"\\]/g, ' ').trim();
+  const token = ++tokenSugerencias;
+  if (t.length < 2) { $$('[data-sugerencias]').forEach((el) => el.remove()); return; }
+  let qa = db.from('anuncios').select('id,titulo,precio,precio_negociable,imagen_urls,municipio,tipo,zona_lat,zona_lng')
+    .eq('estado', 'aprobado').or(`titulo.ilike.%${t}%,descripcion.ilike.%${t}%,categoria.ilike.%${t}%,municipio.ilike.%${t}%`)
+    .order('destacado', { ascending: false }).order('created_at', { ascending: false }).limit(6);
+  let qs = db.from('solicitudes').select('id,titulo,presupuesto,municipio,urgencia')
+    .eq('estado', 'abierta').or(`titulo.ilike.%${t}%,descripcion.ilike.%${t}%,categoria.ilike.%${t}%`)
+    .order('created_at', { ascending: false }).limit(3);
+  if (S.user) { qa = qa.neq('user_id', S.user.id); qs = qs.neq('user_id', S.user.id); }
+  const [{ data: an }, { data: so }] = await Promise.all([qa, qs]);
+  if (token !== tokenSugerencias) return;
+  $$('[data-sugerencias]').forEach((el) => el.remove());
+  const anuncios = an || [], sols = so || [];
+  const panel = document.createElement('div');
+  panel.dataset.sugerencias = '1';
+  panel.className = 'absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl shadow-2xl border border-slate-100 z-50 max-h-[70vh] overflow-y-auto fade-in text-left';
+  panel.innerHTML = `
+    ${anuncios.length ? `<p class="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Ofertas</p>
+      ${anuncios.map((a) => {
+        const d = distanciaA(a);
+        return `<a href="#anuncio=${a.id}" data-sug class="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 focus:bg-indigo-50 outline-none">
+          <img src="${esc(parseImagenes(a.imagen_urls)[0])}" alt="" class="w-11 h-11 rounded-lg object-cover shrink-0 bg-slate-100">
+          <span class="min-w-0 grow"><span class="block text-sm font-semibold text-slate-800 truncate">${resaltar(a.titulo, q)}</span>
+          <span class="block text-xs text-slate-500 truncate"><b class="text-slate-700">${precioTexto(a.precio, a.precio_negociable)}</b> · 📍 ${esc(a.municipio || '')}${d != null ? ' · ' + textoDistancia(d) : ''}</span></span></a>`;
+      }).join('')}` : ''}
+    ${sols.length ? `<p class="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Personas que lo necesitan</p>
+      ${sols.map((x) => `<a href="#solicitud=${x.id}" data-sug class="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 focus:bg-indigo-50 outline-none">
+        <span class="w-11 h-11 rounded-lg bg-emerald-50 grid place-items-center text-xl shrink-0">🙋</span>
+        <span class="min-w-0 grow"><span class="block text-sm font-semibold text-slate-800 truncate">${resaltar(x.titulo, q)}</span>
+        <span class="block text-xs text-slate-500 truncate">${x.presupuesto ? 'Presupuesto ' + fmtCOP(x.presupuesto) : 'A convenir'} · 📍 ${esc(x.municipio || '')}</span></span></a>`).join('')}` : ''}
+    ${anuncios.length || sols.length
+      ? `<button type="button" data-ver-todos class="w-full text-left px-4 py-3 mt-1 border-t border-slate-100 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 focus:bg-indigo-50 outline-none">🔍 Ver todos los resultados para “${esc(q)}” →</button>`
+      : `<div class="px-4 py-5 text-sm text-slate-500 text-center">No encontramos “${esc(q)}”.
+          <button type="button" data-accion="nueva-solicitud" class="mt-3 btn btn-verde !py-1.5 text-xs w-full">🙋 Publicar que lo necesito y recibir propuestas</button></div>`}`;
+  inp.closest('[data-buscador]').appendChild(panel);
+  panel.querySelector('[data-ver-todos]')?.addEventListener('click', () => irAResultados(q));
+  panel.addEventListener('click', (e) => { if (e.target.closest('a[data-sug], [data-accion]')) quitarSugerencias(); });
+}
+
+function irAResultados(valor) {
+  quitarSugerencias();
+  S.filtros.q = String(valor || '').trim();
+  inputsBusqueda().forEach((i) => { i.value = S.filtros.q; i.blur(); });
+  window.scrollTo({ top: 0 });
+  if (S.vista === 'solicitudes') vistaSolicitudes();
+  else if (S.vista === 'inicio') vistaInicio();
+  else location.hash = '#inicio';
+}
+
+function limpiarBusqueda() {
+  quitarSugerencias();
+  S.filtros.q = '';
+  inputsBusqueda().forEach((i) => (i.value = ''));
+  if (S.vista === 'solicitudes') vistaSolicitudes(); else vistaInicio();
+}
+
+function encabezadoBusqueda(activo) {
+  return `
+    <div class="mt-4 flex flex-wrap items-end justify-between gap-2">
+      <div class="min-w-0">
+        <p class="text-xs text-slate-500">Resultados de búsqueda</p>
+        <h1 class="text-xl font-extrabold truncate">🔍 “${esc(S.filtros.q)}” <span id="nResultados" class="text-sm font-semibold text-slate-400"></span></h1>
+      </div>
+      <div class="flex gap-2 items-center">
+        <div class="inline-flex p-1 bg-slate-200/70 rounded-xl text-xs font-bold">
+          <a href="#inicio" class="px-3 py-1.5 rounded-lg ${activo === 'inicio' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}">🛍️ Ofertas</a>
+          <a href="#solicitudes" class="px-3 py-1.5 rounded-lg ${activo === 'solicitudes' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}">🙋 Solicitudes</a>
+        </div>
+        <button data-accion="limpiar-busqueda" class="btn btn-suave !py-1.5 text-xs">✕ Limpiar</button>
+      </div>
+    </div>`;
 }
 
 function configurarNavInferior() {
@@ -421,10 +538,16 @@ function abrirAuth(modo = 'login') {
           <div><label class="etiqueta">Departamento</label><select name="depto" class="campo"></select></div>
           <div><label class="etiqueta">Municipio</label><select name="mun" class="campo"></select></div>
         </div>
-        <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-3">
-          <input type="checkbox" name="acepto" class="mt-0.5 accent-indigo-600">
-          <span>Acepto que OFERTAL registre mi ubicación mientras uso la plataforma, por seguridad. Los demás usuarios <b>solo verán un área aproximada</b>, nunca mi ubicación exacta.</span>
-        </label>`}
+        <div class="space-y-2">
+          <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-3">
+            <input type="checkbox" name="terminos" class="mt-0.5 accent-indigo-600">
+            <span>He leído y acepto los <button type="button" data-ver-terminos class="text-indigo-600 font-bold underline">Términos y condiciones</button> y la política de tratamiento de datos de OFERTAL. Entiendo que la plataforma revisa las publicaciones, pero <b>no se hace responsable por robos, estafas ni acuerdos entre usuarios</b>.</span>
+          </label>
+          <label class="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 rounded-xl p-3">
+            <input type="checkbox" name="acepto" class="mt-0.5 accent-indigo-600">
+            <span>Acepto que OFERTAL registre mi ubicación mientras uso la plataforma, por seguridad. Los demás usuarios <b>solo verán un área aproximada</b>, nunca mi ubicación exacta.</span>
+          </label>
+        </div>`}
         <p id="authError" class="hidden text-sm text-rose-600 bg-rose-50 rounded-xl px-3 py-2"></p>
         <button data-enviar class="btn btn-oscuro w-full py-3 text-base">${esLogin ? 'Ingresar' : 'Crear cuenta'}</button>
       </form>
@@ -434,7 +557,10 @@ function abrirAuth(modo = 'login') {
       </div>`,
   });
   const f = m.el.querySelector('#fAuth');
-  if (!esLogin) llenarSelectDepartamentos(f.depto, f.mun);
+  if (!esLogin) {
+    llenarSelectDepartamentos(f.depto, f.mun);
+    m.el.querySelector('[data-ver-terminos]').onclick = abrirTerminosModal;
+  }
   const err = m.el.querySelector('#authError');
   const mostrarError = (t) => { err.textContent = t; err.classList.remove('hidden'); };
   f.tel.addEventListener('input', () => (f.tel.value = f.tel.value.replace(/\D/g, '')));
@@ -453,6 +579,7 @@ function abrirAuth(modo = 'login') {
       if (/^(\d)\1{3}$/.test(pin) || ['1234', '4321', '0000'].includes(pin)) return mostrarError('Elige un PIN menos obvio (no 1234, 0000, 1111…).');
       if (f.nombre.value.trim().length < 2) return mostrarError('Escribe tu nombre.');
       if (!f.depto.value || !f.mun.value) return mostrarError('Selecciona tu departamento y municipio.');
+      if (!f.terminos.checked) return mostrarError('Debes aceptar los términos y condiciones para crear tu cuenta.');
       if (!f.acepto.checked) return mostrarError('Debes aceptar el uso de la ubicación para continuar.');
     }
     const btn = f.querySelector('[data-enviar]');
@@ -468,7 +595,7 @@ function abrirAuth(modo = 'login') {
       } else {
         const { data, error } = await db.auth.signUp({
           email, password,
-          options: { data: { whatsapp: tel, primer_nombre: f.nombre.value.trim(), edad: parseInt(f.edad.value, 10) || null, departamento: f.depto.value, municipio: f.mun.value } },
+          options: { data: { whatsapp: tel, primer_nombre: f.nombre.value.trim(), edad: parseInt(f.edad.value, 10) || null, departamento: f.depto.value, municipio: f.mun.value, terminos_version: TERMINOS_VERSION } },
         });
         if (error) throw error;
         if (!data.session) {
@@ -506,6 +633,65 @@ function bienvenidaNuevoUsuario() {
     const ok = await asegurarUbicacion('registro');
     if (ok) { m.cerrar(); toast('¡Listo! Ya puedes publicar', 'ok'); }
   };
+}
+
+// ======================================================================
+// TÉRMINOS Y CONDICIONES
+// ======================================================================
+const terminosAceptados = () => !S.user || !!S.perfil?.terminos_aceptados_at || S.perfil?.rol === 'admin';
+
+function abrirTerminosModal() {
+  modal({ titulo: '📜 Términos y condiciones', ancho: 'sm:max-w-2xl', html: terminosHtml(), pie: '<button data-cerrar class="btn btn-oscuro w-full">Cerrar</button>' });
+}
+
+function modalTerminosPendientes(motivo = '') {
+  if (!S.user || terminosAceptados() || document.querySelector('[data-modal-terminos]')) return;
+  const m = modal({
+    ancho: 'sm:max-w-lg',
+    html: `<div data-modal-terminos class="space-y-4">
+      <div class="text-center"><div class="text-4xl">📜</div>
+        <h2 class="text-xl font-bold mt-2">Términos y condiciones</h2>
+        <p class="text-sm text-slate-500 mt-1">${esc(motivo || 'Para seguir usando OFERTAL necesitamos que leas y aceptes nuestros términos y condiciones.')}</p></div>
+      ${resumenTerminosHtml()}
+      <button type="button" data-leer class="text-sm font-semibold text-indigo-600 hover:underline">Leer los términos completos ›</button>
+      <label class="flex items-start gap-2 text-sm bg-slate-50 rounded-xl p-3 cursor-pointer">
+        <input type="checkbox" data-acepto class="mt-0.5 accent-indigo-600">
+        <span>He leído y acepto los <b>Términos y condiciones</b> y la <b>política de tratamiento de datos</b> de OFERTAL (responsable: ${esc(RESPONSABLE)}).</span>
+      </label>
+      <button data-ok class="btn btn-primario w-full py-3" disabled>Aceptar y continuar</button>
+      <button data-cerrar class="w-full text-xs text-slate-400 hover:text-slate-600">Ahora no</button>
+    </div>`,
+  });
+  const ok = m.el.querySelector('[data-ok]');
+  m.el.querySelector('[data-acepto]').onchange = (e) => (ok.disabled = !e.target.checked);
+  m.el.querySelector('[data-leer]').onclick = abrirTerminosModal;
+  ok.onclick = async () => {
+    ok.disabled = true;
+    const { data, error } = await db.rpc('aceptar_terminos', { p_version: TERMINOS_VERSION });
+    if (error) { ok.disabled = false; return toast(errorMsg(error), 'error'); }
+    Object.assign(S.perfil, { terminos_aceptados_at: data, terminos_version: TERMINOS_VERSION });
+    m.cerrar();
+    toast('¡Gracias! Ya puedes usar OFERTAL sin restricciones', 'ok');
+    if (S.vista === 'terminos') vistaTerminos();
+  };
+}
+
+function exigirTerminos(accion) {
+  if (terminosAceptados()) return true;
+  modalTerminosPendientes(`Para ${accion} debes aceptar los términos y condiciones.`);
+  return false;
+}
+
+function vistaTerminos() {
+  const pendiente = S.user && !terminosAceptados();
+  const aceptado = S.user && S.perfil?.terminos_aceptados_at;
+  app.innerHTML = `
+    ${tituloSeccion('📜 Términos y condiciones', `Responsable: ${esc(RESPONSABLE)}`)}
+    ${pendiente ? `<div class="max-w-3xl mb-4 rounded-2xl bg-amber-50 border border-amber-200 p-4 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-amber-900">Aún no has aceptado estos términos.</p>
+        <button data-accion="aceptar-terminos" class="btn btn-primario !py-2 text-sm">Aceptar términos</button></div>` : ''}
+    ${aceptado && S.perfil?.rol !== 'admin' ? `<p class="max-w-3xl mb-4 text-xs text-emerald-700">✓ Aceptaste la versión ${esc(S.perfil.terminos_version || '')} el ${fechaHora(S.perfil.terminos_aceptados_at)}.</p>` : ''}
+    <div class="tarjeta p-6 sm:p-8 max-w-3xl">${terminosHtml()}</div>`;
 }
 
 async function cerrarSesion() {
@@ -611,13 +797,14 @@ function selectDistancia(valor) {
 
 async function vistaInicio() {
   const f = S.filtros;
+  const enBusqueda = !!f.q;
   app.innerHTML = `
-    ${encabezadoExplorar('inicio')}
-    <div class="mt-5 flex gap-2 overflow-x-auto hide-scrollbar pb-1" id="chipsCategorias">
+    ${enBusqueda ? encabezadoBusqueda('inicio') : encabezadoExplorar('inicio')}
+    <div class="mt-5 flex gap-2 overflow-x-auto hide-scrollbar pb-1 ${enBusqueda ? 'hidden' : ''}" id="chipsCategorias">
       <button data-filtro-cat="" class="chip ${!f.categoria ? 'activo' : ''}">Todas</button>
       ${S.categorias.map((c) => `<button data-filtro-cat="${esc(c.nombre)}" class="chip ${f.categoria === c.nombre ? 'activo' : ''}">${c.icono} ${esc(c.nombre)}</button>`).join('')}
     </div>
-    <div class="mt-3 flex flex-wrap gap-2 items-center">
+    <div class="${enBusqueda ? 'mt-3' : 'mt-3'} flex flex-wrap gap-2 items-center">
       <div class="inline-flex bg-white border border-slate-200 rounded-xl p-0.5">
         ${[['todos', 'Todo'], ['producto', 'Productos'], ['servicio', 'Servicios']].map(([v, t]) => `<button data-filtro-tipo="${v}" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold ${f.tipo === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'}">${t}</button>`).join('')}
       </div>
@@ -628,7 +815,7 @@ async function vistaInicio() {
           .map(([v, t]) => `<option value="${v}" ${f.orden === v ? 'selected' : ''}>↕ ${t}</option>`).join('')}
       </select>
     </div>
-    <div id="feed" class="mt-5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5"></div>
+    <div id="feed" class="${enBusqueda ? 'mt-4' : 'mt-5'} grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5"></div>
     <div id="feedVacio" class="hidden text-center py-16">
       <div class="text-5xl mb-3">🔎</div>
       <h3 class="font-bold text-lg">No encontramos ofertas</h3>
@@ -699,6 +886,8 @@ async function cargarAnuncios(reiniciar = true) {
   feed.insertAdjacentHTML('beforeend', lista.map(tarjetaAnuncio).join(''));
   $('#feedVacio').classList.toggle('hidden', S.anuncios.length > 0);
   $('#btnMas').classList.toggle('hidden', !S.hayMas);
+  const nRes = $('#nResultados');
+  if (nRes) nRes.textContent = `· ${S.anuncios.length}${S.hayMas ? '+' : ''} oferta${S.anuncios.length === 1 ? '' : 's'}`;
 }
 
 function tarjetaAnuncio(a) {
@@ -802,7 +991,7 @@ async function abrirAnuncio(id) {
           </div>
           <h2 class="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">${esc(a.titulo)}</h2>
           <p class="text-2xl sm:text-3xl font-black text-indigo-600 mt-2">${precioTexto(a.precio, a.precio_negociable)}</p>
-          <p class="text-xs text-slate-400 mt-2">📍 ${esc(a.municipio || 'Colombia')}${a.departamento ? ', ' + esc(a.departamento) : ''} · ${tiempoRelativo(a.aprobado_at || a.created_at)} · 👁 ${fmtNum(a.vistas)} vistas${distanciaA(a) != null ? ' · ' + textoDistancia(distanciaA(a)) : ''}</p>
+          <p class="text-xs text-slate-400 mt-2">📍 ${esc(a.municipio || 'Colombia')}${a.departamento ? ', ' + esc(a.departamento) : ''} · ${tiempoRelativo(a.aprobado_at || a.created_at)} · 👁 ${fmtNum(a.vistas)} vistas${distanciaA(a) != null ? ' · ' + textoDistancia(distanciaA(a)) : ''}${a.zona_lat != null ? ' · <span class="text-emerald-600 font-semibold">✓ Ubicación registrada</span>' : ''}</p>
         </div>
         ${esMio && a.estado === 'rechazado' && a.motivo_rechazo ? `<div class="rounded-xl bg-rose-50 text-rose-800 text-sm p-3"><b>Motivo del rechazo:</b> ${esc(a.motivo_rechazo)}</div>` : ''}
         <div>
@@ -916,6 +1105,7 @@ async function mejorarConIA(form, clase, btn) {
 
 async function formularioOferta(id = null) {
   if (!S.user) return abrirAuth('login');
+  if (!exigirTerminos('publicar')) return;
   cerrarTodosLosModales();
   let a = null;
   if (id) {
@@ -1045,6 +1235,7 @@ async function formularioOferta(id = null) {
     } catch (ex) {
       if (ex.silencio) return;
       if (codigoError(ex) === 'UBICACION_REQUERIDA') ayudaUbicacion(S.permisoUbic === 'denied');
+      else if (codigoError(ex) === 'TERMINOS_REQUERIDOS') { S.perfil.terminos_aceptados_at = null; modalTerminosPendientes('Para publicar debes aceptar los términos y condiciones.'); }
       else toast(errorMsg(ex), 'error');
     } finally {
       btn.disabled = false; btn.textContent = a ? 'Guardar cambios' : 'Enviar publicación';
@@ -1075,9 +1266,10 @@ function exitoPublicacion(estado, clase, id) {
 // ======================================================================
 async function vistaSolicitudes() {
   const f = S.filtrosSol;
+  const enBusqueda = !!S.filtros.q;
   app.innerHTML = `
-    ${encabezadoExplorar('solicitudes')}
-    <div class="mt-5 rounded-2xl bg-emerald-50 border border-emerald-100 p-4 flex flex-wrap items-center justify-between gap-3">
+    ${enBusqueda ? encabezadoBusqueda('solicitudes') : encabezadoExplorar('solicitudes')}
+    <div class="mt-5 rounded-2xl bg-emerald-50 border border-emerald-100 p-4 flex flex-wrap items-center justify-between gap-3 ${enBusqueda ? 'hidden' : ''}">
       <p class="text-sm text-emerald-900"><b>Personas que necesitan un servicio o producto.</b> ¿Puedes ayudar? Envía tu propuesta con precio.</p>
       <button data-accion="nueva-solicitud" class="btn btn-verde">🙋 Publicar lo que necesito</button>
     </div>
@@ -1132,6 +1324,8 @@ async function renderListaSolicitudes() {
     const { data: c } = await db.rpc('contar_propuestas', { p_solicitudes: lista.map((s) => s.id) });
     (c || []).forEach((x) => conteos.set(x.solicitud_id, x.total));
   }
+  const nRes = $('#nResultados');
+  if (nRes) nRes.textContent = `· ${lista.length} solicitud${lista.length === 1 ? '' : 'es'}`;
   if (!lista.length) {
     cont.innerHTML = `<div class="md:col-span-2 text-center py-14">
       <div class="text-5xl mb-3">🙌</div>
@@ -1224,6 +1418,7 @@ async function abrirSolicitud(id) {
 
 function formularioPropuesta(solicitudId) {
   if (!S.user) return abrirAuth('login');
+  if (!exigirTerminos('enviar propuestas')) return;
   const m = modal({
     titulo: '💼 Enviar propuesta', ancho: 'sm:max-w-md',
     html: `<form class="space-y-4">
@@ -1251,6 +1446,7 @@ function formularioPropuesta(solicitudId) {
 
 async function formularioSolicitud(id = null) {
   if (!S.user) return abrirAuth('login');
+  if (!exigirTerminos('publicar')) return;
   cerrarTodosLosModales();
   let s = null;
   if (id) {
@@ -1339,6 +1535,7 @@ async function formularioSolicitud(id = null) {
     } catch (ex) {
       if (ex.silencio) return;
       if (codigoError(ex) === 'UBICACION_REQUERIDA') ayudaUbicacion(S.permisoUbic === 'denied');
+      else if (codigoError(ex) === 'TERMINOS_REQUERIDOS') { S.perfil.terminos_aceptados_at = null; modalTerminosPendientes('Para publicar debes aceptar los términos y condiciones.'); }
       else toast(errorMsg(ex), 'error');
     } finally {
       btn.disabled = false; btn.textContent = s ? 'Guardar cambios' : 'Publicar solicitud';
@@ -1811,7 +2008,7 @@ async function vistaPerfil() {
           <div class="mt-3 rounded-xl bg-indigo-50 text-indigo-900 text-xs p-3">🔒 Tu ubicación exacta solo la conoce el equipo de OFERTAL. Se usa por seguridad y para respaldar a quienes contratan servicios; nunca se muestra a otros usuarios.</div>
         </section>
         <section class="tarjeta divide-y divide-slate-50">
-          ${[['#mis-publicaciones', '📦', 'Mis publicaciones'], ['#mis-solicitudes', '🙋', 'Mis solicitudes'], ['#favoritos', '❤️', 'Favoritos'], ['#mensajes', '💬', 'Mensajes'], ['#notificaciones', '🔔', 'Notificaciones'], ['#soporte', '🛟', 'Soporte y ayuda'], ['#como-funciona', '📖', 'Cómo funciona OFERTAL']]
+          ${[['#mis-publicaciones', '📦', 'Mis publicaciones'], ['#mis-solicitudes', '🙋', 'Mis solicitudes'], ['#favoritos', '❤️', 'Favoritos'], ['#mensajes', '💬', 'Mensajes'], ['#notificaciones', '🔔', 'Notificaciones'], ['#soporte', '🛟', 'Soporte y ayuda'], ['#como-funciona', '📖', 'Cómo funciona OFERTAL'], ['#terminos', '📜', 'Términos y condiciones']]
             .map(([h, i, t]) => `<a href="${h}" class="flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 text-sm font-medium"><span>${i}</span><span class="grow">${t}</span><span class="text-slate-300">›</span></a>`).join('')}
           ${S.perfil.rol === 'admin' ? '<a href="admin.html" class="flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50 text-sm font-bold text-indigo-700"><span>🛡️</span><span class="grow">Panel de administración</span><span>›</span></a>' : ''}
           <button data-accion="logout" class="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-rose-50 text-sm font-medium text-rose-600"><span>↩</span>Cerrar sesión</button>
@@ -1961,6 +2158,7 @@ const FAQ = [
   ['¿Cuánto tiempo tarda la revisión?', 'Normalmente unas pocas horas. Si fue rechazada verás el motivo en «Mis publicaciones»; corrígela y guárdala para que vuelva a revisión.'],
   ['¿Cómo evito estafas?', 'Nunca pagues anticipos a desconocidos, revisa las calificaciones y el sello ✔ de verificado, conversa por el chat de OFERTAL y reúnete en lugares públicos. Si algo te parece sospechoso, usa el botón ⚑ Reportar.'],
   ['¿Publicar tiene algún costo?', 'No. Publicar ofertas y solicitudes en OFERTAL es gratis.'],
+  ['¿OFERTAL responde si me roban o me estafan?', 'OFERTAL conecta personas y revisa las publicaciones para evitar contenido indebido, pero no participa en los acuerdos ni en los pagos, por lo que no se hace responsable por robos, estafas o incumplimientos entre usuarios. Si te ocurre algo, denúncialo a las autoridades y repórtalo aquí para suspender la cuenta. Consulta los Términos y condiciones.'],
 ];
 
 async function vistaSoporte() {
@@ -1977,7 +2175,10 @@ async function vistaSoporte() {
       <section>
         <h2 class="text-lg font-extrabold mb-3">Preguntas frecuentes</h2>
         <div class="space-y-2">${FAQ.map(([p, r]) => `<details class="tarjeta px-4 py-3"><summary class="flex justify-between items-center gap-3 font-semibold text-sm">${esc(p)}<span class="rotar transition text-slate-400">⌄</span></summary><p class="text-sm text-slate-600 mt-2 leading-relaxed">${esc(r)}</p></details>`).join('')}</div>
-        <a href="#como-funciona" class="inline-block mt-3 text-sm font-semibold text-indigo-600 hover:underline">📖 Ver cómo funciona OFERTAL ›</a>
+        <div class="flex flex-wrap gap-4 mt-3 text-sm font-semibold">
+          <a href="#como-funciona" class="text-indigo-600 hover:underline">📖 Cómo funciona OFERTAL ›</a>
+          <a href="#terminos" class="text-indigo-600 hover:underline">📜 Términos y condiciones ›</a>
+        </div>
       </section>
       <section>${S.user ? `
         <div class="flex items-center justify-between mb-3"><h2 class="text-lg font-extrabold">Mis tickets</h2><button data-accion="nuevo-ticket" class="btn btn-primario">＋ Nuevo ticket</button></div>
@@ -2196,6 +2397,9 @@ const ACCIONES = {
   'activar-ubicacion': () => (S.permisoUbic === 'denied' ? ayudaUbicacion(true) : asegurarUbicacion('manual').then((ok) => ok && toast('Ubicación activada 📍', 'ok'))),
   'actualizar-ubicacion': async () => { if (await asegurarUbicacion('manual')) { toast('Ubicación actualizada', 'ok'); vistaPerfil(); } },
   'nuevo-ticket': (d) => formularioTicket(d.texto || ''),
+  'aceptar-terminos': () => modalTerminosPendientes(),
+  'ver-terminos': () => abrirTerminosModal(),
+  'limpiar-busqueda': () => limpiarBusqueda(),
   'resolver-ticket': async () => {
     await db.from('tickets').update({ estado: 'resuelto' }).eq('id', S.ticketAbierto);
     toast('¡Nos alegra haberte ayudado! 🙌', 'ok');

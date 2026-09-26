@@ -33,20 +33,18 @@
     <div class="max-w-7xl mx-auto px-4 h-16 flex items-center gap-4">
       <a href="#inicio" class="text-2xl sm:text-3xl font-extrabold tracking-tighter text-slate-800 shrink-0" aria-label="OFERTAL, inicio">OFERTAL<span class="text-indigo-600">.</span></a>
       <div id="zonaBuscador" class="hidden md:block grow max-w-xl">
-        <label class="relative block">
-          <span class="sr-only">Buscar</span>
-          <input id="buscarDesktop" type="search" placeholder="Buscar productos, servicios o municipios…" class="campo !pl-10 !rounded-full !bg-slate-50">
-          <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-        </label>
+        <div class="relative" data-buscador>
+          <input id="buscarDesktop" type="search" autocomplete="off" aria-label="Buscar" placeholder="Buscar productos, servicios o municipios…" class="campo !pl-10 !rounded-full !bg-slate-50">
+          <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">🔍</span>
+        </div>
       </div>
       <nav id="navAcciones" class="ml-auto flex items-center gap-1 sm:gap-2"></nav>
     </div>
     <div id="buscadorMovil" class="md:hidden px-4 pb-3">
-      <label class="relative block">
-        <span class="sr-only">Buscar</span>
-        <input id="buscarMovil" type="search" placeholder="Buscar en OFERTAL…" class="campo !pl-10 !rounded-full !bg-slate-50">
-        <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
-      </label>
+      <div class="relative" data-buscador>
+        <input id="buscarMovil" type="search" autocomplete="off" enterkeyhint="search" aria-label="Buscar" placeholder="Buscar en OFERTAL…" class="campo !pl-10 !rounded-full !bg-slate-50">
+        <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">🔍</span>
+      </div>
     </div>
   </header>
 
@@ -55,15 +53,16 @@
   </main>
 
   <footer class="hidden md:block border-t border-slate-100 bg-white">
-    <div class="max-w-7xl mx-auto px-4 py-8 flex flex-wrap gap-6 justify-between items-center text-sm text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 md:pr-56 py-8 flex flex-wrap gap-6 justify-between items-center text-sm text-slate-500">
       <div>
         <p class="text-xl font-extrabold tracking-tighter text-slate-800">OFERTAL<span class="text-indigo-600">.</span></p>
-        <p class="text-xs mt-1">Compra, vende y contrata cerca de ti · © <span id="anio"></span></p>
+        <p class="text-xs mt-1">Compra, vende y contrata cerca de ti · © <span id="anio"></span> · Responsable: Cesar Santana</p>
       </div>
       <div class="flex gap-5">
         <a href="#como-funciona" class="hover:text-indigo-600">Cómo funciona</a>
         <a href="#solicitudes" class="hover:text-indigo-600">Solicitudes</a>
         <a href="#soporte" class="hover:text-indigo-600">Ayuda y soporte</a>
+        <a href="#terminos" class="hover:text-indigo-600">Términos y condiciones</a>
       </div>
     </div>
   </footer>

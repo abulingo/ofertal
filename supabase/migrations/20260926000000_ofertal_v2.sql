@@ -69,6 +69,11 @@ create table if not exists public.perfiles (
   created_at timestamptz not null default now()
 );
 
+-- Aceptación de términos y condiciones
+alter table public.perfiles
+  add column if not exists terminos_version text,
+  add column if not exists terminos_aceptados_at timestamptz;
+
 create or replace function public.es_admin()
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.perfiles where id = auth.uid() and rol = 'admin' and estado = 'activo')
@@ -98,14 +103,16 @@ $$;
 create or replace function public.tg_nuevo_usuario()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.perfiles (id, nombre, whatsapp, edad, departamento, municipio)
+  insert into public.perfiles (id, nombre, whatsapp, edad, departamento, municipio, terminos_version, terminos_aceptados_at)
   values (
     new.id,
     nullif(trim(new.raw_user_meta_data->>'primer_nombre'), ''),
     coalesce(nullif(new.raw_user_meta_data->>'whatsapp', ''), split_part(new.email, '@', 1)),
     case when (new.raw_user_meta_data->>'edad') ~ '^\d{1,3}$' then (new.raw_user_meta_data->>'edad')::int end,
     nullif(new.raw_user_meta_data->>'departamento', ''),
-    nullif(new.raw_user_meta_data->>'municipio', '')
+    nullif(new.raw_user_meta_data->>'municipio', ''),
+    nullif(new.raw_user_meta_data->>'terminos_version', ''),
+    case when nullif(new.raw_user_meta_data->>'terminos_version', '') is not null then now() end
   )
   on conflict (id) do nothing;
   return new;
@@ -145,6 +152,8 @@ begin
   new.zona_radio := old.zona_radio;
   new.zona_actualizada := old.zona_actualizada;
   new.ubicacion_permitida := old.ubicacion_permitida;
+  new.terminos_version := old.terminos_version;
+  new.terminos_aceptados_at := old.terminos_aceptados_at;
   new.created_at := old.created_at;
   return new;
 end $$;
@@ -152,6 +161,30 @@ end $$;
 drop trigger if exists perfil_proteger on public.perfiles;
 create trigger perfil_proteger before update on public.perfiles
   for each row execute function public.tg_perfil_proteger();
+
+create or replace function public.aceptar_terminos(p_version text)
+returns timestamptz language plpgsql security definer set search_path = public as $$
+declare
+  v_fecha timestamptz := now();
+begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
+  perform set_config('ofertal.sistema', '1', true);
+  update public.perfiles set terminos_version = left(p_version, 20), terminos_aceptados_at = v_fecha
+   where id = auth.uid();
+  return v_fecha;
+end $$;
+
+create or replace function public._exigir_terminos(p_uid uuid)
+returns void language plpgsql stable security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.perfiles where id = p_uid and terminos_aceptados_at is not null) then
+    raise exception 'TERMINOS_REQUERIDOS: Debes aceptar los términos y condiciones para continuar.';
+  end if;
+end $$;
+
+-- Los administradores no necesitan aceptar desde el sitio
+update public.perfiles set terminos_version = coalesce(terminos_version, 'admin'), terminos_aceptados_at = coalesce(terminos_aceptados_at, now())
+ where rol = 'admin';
 
 -- ---------------------------------------------------------------------
 -- UBICACIÓN PRIVADA (solo el dueño y el administrador)
@@ -243,6 +276,13 @@ begin
   end if;
 
   update public.perfiles set ultima_conexion = now(), ubicacion_permitida = true where id = v_uid;
+
+  -- Publicaciones anteriores sin zona: toman la zona aproximada actual del autor
+  select * into v_p from public.perfiles where id = v_uid;
+  update public.anuncios set zona_lat = v_p.zona_lat, zona_lng = v_p.zona_lng, zona_radio = v_p.zona_radio
+   where user_id = v_uid and zona_lat is null;
+  update public.solicitudes set zona_lat = v_p.zona_lat, zona_lng = v_p.zona_lng, zona_radio = v_p.zona_radio
+   where user_id = v_uid and zona_lat is null;
 
   select * into v_ult from public.ubicaciones_historial
    where user_id = v_uid order by created_at desc limit 1;
@@ -418,6 +458,7 @@ begin
   if v_p.id is null or v_p.estado <> 'activo' then
     raise exception 'CUENTA_SUSPENDIDA: Tu cuenta no está activa. Escríbenos desde Soporte.';
   end if;
+  perform public._exigir_terminos(p_uid);
   select (select count(*) from public.anuncios where user_id = p_uid and created_at > now() - interval '24 hours')
        + (select count(*) from public.solicitudes where user_id = p_uid and created_at > now() - interval '24 hours')
     into v_n;
@@ -906,6 +947,7 @@ declare
 begin
   if v_uid is null then raise exception 'No autenticado'; end if;
   if not public.usuario_activo(v_uid) then raise exception 'CUENTA_SUSPENDIDA: Tu cuenta no está activa.'; end if;
+  perform public._exigir_terminos(v_uid);
   select * into s from public.solicitudes where id = p_solicitud;
   if s.id is null then raise exception 'La solicitud no existe'; end if;
   if s.user_id = v_uid then raise exception 'No puedes enviar propuestas a tu propia solicitud'; end if;
@@ -1290,13 +1332,15 @@ begin
   return r;
 end $$;
 
+drop function if exists public.admin_usuarios();
 create or replace function public.admin_usuarios()
 returns table (
   id uuid, nombre text, whatsapp text, edad int, departamento text, municipio text, bio text,
   avatar_url text, rol text, estado text, motivo_suspension text, verificado boolean,
   zona_lat float8, zona_lng float8, zona_radio int, ultima_conexion timestamptz, created_at timestamptz,
   ultimo_ingreso timestamptz, lat float8, lng float8, precision_m float8, ubicacion_at timestamptz,
-  num_anuncios int, num_solicitudes int, calificacion numeric, num_resenas int
+  num_anuncios int, num_solicitudes int, calificacion numeric, num_resenas int,
+  terminos_version text, terminos_aceptados_at timestamptz
 ) language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.es_admin() then raise exception 'No autorizado'; end if;
@@ -1307,7 +1351,8 @@ begin
          (select count(*)::int from public.anuncios a where a.user_id = p.id),
          (select count(*)::int from public.solicitudes s where s.user_id = p.id),
          (select round(avg(r.estrellas)::numeric, 1) from public.resenas r where r.usuario_id = p.id),
-         (select count(*)::int from public.resenas r where r.usuario_id = p.id)
+         (select count(*)::int from public.resenas r where r.usuario_id = p.id),
+         p.terminos_version, p.terminos_aceptados_at
   from public.perfiles p
   left join auth.users u on u.id = p.id
   left join public.ubicaciones ub on ub.user_id = p.id
@@ -1507,6 +1552,7 @@ revoke execute on function public.notificar_admins(text, text, text, text) from 
 revoke execute on function public._notificar_proveedores(uuid) from public, anon, authenticated;
 revoke execute on function public._zona_aleatoria(float8, float8, int) from public, anon, authenticated;
 revoke execute on function public._validar_publicacion(uuid) from public, anon, authenticated;
+revoke execute on function public._exigir_terminos(uuid) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- STORAGE: cada usuario sube a su propia carpeta

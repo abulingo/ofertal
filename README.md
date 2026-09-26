@@ -64,7 +64,7 @@ supabase/functions/admin   Edge Function para acciones con llave de servicio
 - Ejecutar `supabase/migrations/20260926000000_ofertal_v2.sql` en el editor SQL (es idempotente).
 - Desplegar las funciones `ia` y `admin` (con `verify_jwt = false`: validan el token internamente).
 - Secretos de las funciones: `GCP_SA_JSON` (JSON de la cuenta de servicio de Google Cloud con acceso a Vertex AI) y,
-  opcionalmente, `VERTEX_MODEL` (por defecto `gemini-2.5-flash`).
+  opcionalmente, `VERTEX_MODEL` (por defecto `gemini-2.5-flash-lite`, el más económico).
 - Para dar rol de administrador a una cuenta: `update perfiles set rol = 'admin' where whatsapp = '3XXXXXXXXX';`
   o desde el panel (Usuarios → Hacer administrador).
 

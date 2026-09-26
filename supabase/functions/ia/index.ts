@@ -15,7 +15,7 @@ const CORS = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const MODEL = Deno.env.get("VERTEX_MODEL") ?? "gemini-2.5-flash";
+const MODEL = Deno.env.get("VERTEX_MODEL") ?? "gemini-2.5-flash-lite";
 const LOCATION = Deno.env.get("VERTEX_LOCATION") ?? "global";
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
@@ -292,7 +292,11 @@ const GUIA_OFERTAL = `OFERTAL es un marketplace colombiano para ofrecer y buscar
 - Seguridad: nunca pagar anticipos a desconocidos, verse en lugares públicos, revisar calificaciones. Se puede reportar
   una publicación o usuario con el botón "Reportar".
 - Calificaciones: después de conversar con alguien se le puede calificar de 1 a 5 estrellas en su perfil.
-- Soporte: se crean tickets en la sección Soporte y el equipo responde ahí mismo; llegan notificaciones con la respuesta.`;
+- Soporte: se crean tickets en la sección Soporte y el equipo responde ahí mismo; llegan notificaciones con la respuesta.
+- Términos y condiciones (responsable: Cesar Santana): se aceptan al registrarse y están en la sección "Términos y condiciones".
+  OFERTAL es un intermediario: revisa y controla las publicaciones para evitar contenido indebido y puede suspender cuentas,
+  pero NO se hace responsable por robos, estafas, fraudes, pagos o incumplimientos entre usuarios. Ante un delito se debe
+  denunciar a las autoridades y reportar la publicación o el usuario en OFERTAL.`;
 
 async function asistenteSoporte(userId: string, body: any) {
   await limitarUso(userId, "asistente_soporte", 25);
