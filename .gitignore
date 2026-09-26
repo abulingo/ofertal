@@ -1,0 +1,8 @@
+# Credenciales: NUNCA subir al repositorio
+credenciales*.txt
+*.env
+.env*
+vertex-ai*.json
+*service-account*.json
+node_modules/
+.DS_Store

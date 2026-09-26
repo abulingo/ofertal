@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>OFERTAL · Administración</title>
+  <link rel="icon" type="image/png" href="assets/img/logo-192.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] } } } };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+  <link rel="stylesheet" href="assets/css/app.css">
+  <style>
+    .nav-item.activo { background: rgb(255 255 255 / .08); color: #fff; }
+    .nav-item.activo .nav-ico { transform: scale(1.1); }
+    .fila:hover { background: #f8fafc; }
+    .viz { --surface: #fcfcfb; --grid: #e1e0d9; --eje: #c3c2b7; --tinta: #0b0b0b; --tinta-2: #52514e; --muted: #898781;
+           --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; }
+    .viz text { font-family: inherit; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased">
+
+  <!-- Inicio de sesión -->
+  <div id="vistaLogin" class="hidden min-h-screen grid place-items-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900">
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-7">
+      <div class="text-center mb-6">
+        <div class="text-3xl font-extrabold tracking-tighter">OFERTAL<span class="text-indigo-600">.</span></div>
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-400 mt-1">Panel de administración</p>
+      </div>
+      <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl mb-4 text-sm font-bold">
+        <button data-modo="correo" class="py-2 rounded-lg bg-white shadow text-slate-800">Correo</button>
+        <button data-modo="pin" class="py-2 rounded-lg text-slate-500">WhatsApp + PIN</button>
+      </div>
+      <form id="fLogin" class="space-y-3">
+        <div data-campo="correo"><label class="etiqueta">Correo</label><input name="email" type="email" autocomplete="username" class="campo" placeholder="admin@ofertal.com"></div>
+        <div data-campo="correo"><label class="etiqueta">Contraseña</label><input name="password" type="password" autocomplete="current-password" class="campo"></div>
+        <div data-campo="pin" class="hidden"><label class="etiqueta">WhatsApp</label><input name="tel" inputmode="numeric" maxlength="10" class="campo" placeholder="3001234567"></div>
+        <div data-campo="pin" class="hidden"><label class="etiqueta">PIN</label><input name="pin" type="password" inputmode="numeric" maxlength="4" class="campo text-center tracking-[0.5em] font-bold"></div>
+        <p id="loginError" class="hidden text-sm text-rose-600 bg-rose-50 rounded-xl px-3 py-2"></p>
+        <button class="btn btn-oscuro w-full py-3">Ingresar</button>
+      </form>
+      <a href="index.html" class="block text-center text-xs text-slate-400 hover:text-slate-600 mt-5">← Volver al sitio</a>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div id="vistaPanel" class="hidden min-h-screen">
+    <div id="velo" class="hidden fixed inset-0 bg-slate-900/50 z-30 lg:hidden"></div>
+    <aside id="barra" class="fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 z-40 flex flex-col -translate-x-full lg:translate-x-0 transition-transform">
+      <div class="h-16 px-5 flex items-center gap-2 border-b border-white/5">
+        <span class="text-xl font-extrabold tracking-tighter text-white">OFERTAL<span class="text-indigo-400">.</span></span>
+        <span class="text-[10px] font-bold uppercase tracking-widest bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded">Admin</span>
+      </div>
+      <nav id="navAdmin" class="grow overflow-y-auto py-3 px-3 space-y-0.5 text-sm"></nav>
+      <div class="p-4 border-t border-white/5 text-xs">
+        <p id="adminNombre" class="font-bold text-white truncate"></p>
+        <div class="flex gap-3 mt-2">
+          <a href="index.html" target="_blank" class="hover:text-white">Ver sitio ↗</a>
+          <button id="btnSalir" class="hover:text-rose-400 ml-auto">Cerrar sesión</button>
+        </div>
+      </div>
+    </aside>
+    <div class="lg:pl-64">
+      <header class="sticky top-0 z-20 bg-white/90 backdrop-blur border-b border-slate-200 h-16 flex items-center gap-3 px-4 sm:px-6">
+        <button id="btnMenu" class="lg:hidden w-10 h-10 grid place-items-center rounded-xl hover:bg-slate-100 text-xl" aria-label="Menú">☰</button>
+        <h1 id="tituloSeccion" class="font-extrabold text-lg truncate"></h1>
+        <div class="ml-auto flex items-center gap-2">
+          <span id="enVivo" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full font-semibold"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>En vivo</span>
+          <button id="btnRefrescar" class="btn btn-suave !py-2 text-xs" title="Actualizar">↻ Actualizar</button>
+        </div>
+      </header>
+      <main id="contenido" class="p-4 sm:p-6 max-w-[1400px]"></main>
+    </div>
+  </div>
+
+  <script type="module" src="assets/js/admin.js"></script>
+</body>
+</html>

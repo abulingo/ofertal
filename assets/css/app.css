@@ -1,0 +1,62 @@
+/* OFERTAL · estilos compartidos (complementan Tailwind) */
+:root { --marca: #4f46e5; --marca-oscuro: #4338ca; }
+html { -webkit-tap-highlight-color: transparent; }
+body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+
+.campo {
+  width: 100%; padding: .6rem .8rem; border: 1px solid #e2e8f0; border-radius: .75rem;
+  background: #fff; font-size: .9rem; color: #1e293b; transition: border-color .15s, box-shadow .15s;
+}
+.campo:focus { outline: none; border-color: var(--marca); box-shadow: 0 0 0 3px rgb(79 70 229 / .15); }
+.campo:disabled { background: #f1f5f9; color: #94a3b8; }
+select.campo { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .7rem center; padding-right: 2rem; }
+.etiqueta { display: block; font-size: .8rem; font-weight: 600; color: #475569; margin-bottom: .3rem; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; font-weight: 600; border-radius: .75rem; padding: .6rem 1rem; font-size: .875rem; transition: background-color .15s, transform .1s, opacity .15s; }
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .55; pointer-events: none; }
+.btn-primario { background: var(--marca); color: #fff; }
+.btn-primario:hover { background: var(--marca-oscuro); }
+.btn-oscuro { background: #1e293b; color: #fff; }
+.btn-oscuro:hover { background: #0f172a; }
+.btn-suave { background: #f1f5f9; color: #334155; }
+.btn-suave:hover { background: #e2e8f0; }
+.btn-verde { background: #16a34a; color: #fff; }
+.btn-verde:hover { background: #15803d; }
+.btn-rojo { background: #fff1f2; color: #be123c; }
+.btn-rojo:hover { background: #ffe4e6; }
+
+.chip { white-space: nowrap; padding: .4rem .85rem; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid #e2e8f0; background: #fff; color: #475569; transition: all .15s; }
+.chip:hover { background: #f8fafc; }
+.chip.activo { background: #1e293b; color: #fff; border-color: #1e293b; }
+
+.tarjeta { background: #fff; border: 1px solid #f1f5f9; border-radius: 1rem; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.line-clamp-1, .line-clamp-2, .line-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-2 { -webkit-line-clamp: 2; } .line-clamp-3 { -webkit-line-clamp: 3; }
+
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes modalIn { from { opacity: 0; transform: translateY(24px) scale(.98) } to { opacity: 1; transform: none } }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-10px) } to { opacity: 1; transform: none } }
+@keyframes pulso { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+.fade-in { animation: fadeIn .18s ease-out; }
+.modal-in { animation: modalIn .22s ease-out; }
+.toast-in { animation: toastIn .2s ease-out; }
+.esqueleto { background: #e2e8f0; animation: pulso 1.4s ease-in-out infinite; border-radius: .75rem; }
+
+.mapa { height: 220px; border-radius: 1rem; overflow: hidden; z-index: 0; background: #e2e8f0; }
+.mapa-grande { height: 420px; }
+.leaflet-container { font-family: inherit; }
+
+.burbuja-yo { background: var(--marca); color: #fff; border-radius: 1.1rem 1.1rem .3rem 1.1rem; }
+.burbuja-otro { background: #fff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 1.1rem 1.1rem 1.1rem .3rem; }
+
+.punto-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 10px; font-weight: 800; display: grid; place-items: center; border: 2px solid #fff; }
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+details[open] .rotar { transform: rotate(180deg); }
